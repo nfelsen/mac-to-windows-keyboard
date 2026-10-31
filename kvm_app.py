@@ -17,6 +17,7 @@ import objc
 import Quartz
 from PyObjCTools import AppHelper
 
+import kvm_bridge as kb
 import kvm_core as kc
 import windows_keyboard as wk
 
@@ -85,6 +86,9 @@ class Controller:
         self.connecting = False
         self.capturing = False
         self.typing = False
+        self.typing_label = ""
+        self.typing_finish = None
+        self.bridge = None
         self.target = self.leds = 0
         self.cable_text = "Connecting…"
         self.keys = kc.KeyboardState()
@@ -240,7 +244,7 @@ class Controller:
             self.finish_smoke_test(1)
 
     def connection_lost(self, exc):
-        self.typing = False
+        self.finish_typing(f"Cable error: {exc}")
         self.stop_capture(send=False)
         self.disconnect()
         self.cable_text = f"Cable error: {exc}"
@@ -261,45 +265,104 @@ class Controller:
         self.notice.setStringValue_(text)
 
     def paste_clipboard(self):
-        if self.typing:
-            return
-        if not self.keyboard:
-            return self.set_notice("Cable not connected; nothing was typed.")
-        if self.target != 1:
-            return self.set_notice("Windows does not see the keyboard; nothing was typed.")
-        if self.leds & 2:
-            return self.set_notice("Turn Caps Lock off on Windows first; nothing was typed.")
         text = AppKit.NSPasteboard.generalPasteboard().stringForType_(AppKit.NSPasteboardTypeString)
         if not text:
             return self.set_notice("The Mac clipboard has no text.")
         try:
-            wk.encode_text(text)
+            taps = wk.encode_text(text)
         except ValueError as exc:
             return self.set_notice(str(exc))
-        # Drop any keys Windows thinks are held (e.g. Ctrl+Alt from the shortcut).
+        error = self.start_taps(taps, "the clipboard")
+        if error:
+            self.set_notice(error)
+
+    def start_taps(self, taps, label, on_finish=None):
+        """Queue validated taps; returns an error string instead if refused.
+
+        ``on_finish(error_or_None)`` is called on the main thread when typing
+        completes, is cancelled, or the cable fails.
+        """
+        if self.typing:
+            return "Already typing; wait for it to finish or press Esc in the app window."
+        if not self.keyboard:
+            return "Cable not connected; nothing was typed."
+        try:
+            kb.check_ready(self.target, self.leds)
+        except kb.BridgeError as exc:
+            return str(exc)
+        # Drop any keys or buttons Windows thinks are held before typing.
         self.keys.clear()
         self.buttons = 0
         self.outbox.release_all()
-        count = self.outbox.text(text)
+        count = self.outbox.taps(taps)
         self.typing = True
-        self.set_notice(f"Typing {count} characters… press Esc to stop.")
+        self.typing_label = label
+        self.typing_finish = on_finish
+        self.set_notice(f"Typing {label} ({count} keys)… press Esc to stop.")
         self.refresh()
+        return None
+
+    def finish_typing(self, error):
+        if not self.typing:
+            return
+        self.typing = False
+        callback, self.typing_finish = self.typing_finish, None
+        self.set_notice(error or f"Typed {self.typing_label} on Windows.")
+        self.refresh()
+        if callback:
+            callback(error)
 
     def cancel_typing(self):
         if not self.typing:
             return
-        self.typing = False
         self.keys.clear()
         if self.outbox:
             self.outbox.release_all()
-        self.set_notice("Stopped typing; the rest of the clipboard was not sent.")
-        self.refresh()
+        self.finish_typing(f"Stopped typing {self.typing_label}; the rest was not sent.")
 
     def text_done(self):
-        if self.typing:
-            self.typing = False
-            self.set_notice("Clipboard typed on Windows.")
-            self.refresh()
+        self.finish_typing(None)
+
+    # ----- requests from kvm_mcp.py -----
+
+    def handle_bridge_request(self, request):
+        """Runs on a bridge worker thread; hops to the main thread for state."""
+        if request.get("op") == "status":
+            result = {}
+            done = threading.Event()
+
+            def read_status():
+                if not self.keyboard:
+                    result["error"] = "kvm_app.py is running but the cable is not connected."
+                else:
+                    result["message"] = kb.status_text(self.path, self.rate, self.firmware,
+                                                       self.target, self.leds, "kvm_app.py")
+                done.set()
+            AppHelper.callAfter(read_status)
+            done.wait(5)
+            if "error" in result or "message" not in result:
+                raise kb.BridgeError(result.get("error", "kvm_app.py did not answer."))
+            return result["message"]
+
+        taps = kb.prepare(request)
+        finished = threading.Event()
+        outcome = {}
+
+        def on_finish(error):
+            outcome["error"] = error
+            finished.set()
+
+        def start():
+            label = (f"keys {request['combo'].strip()}" if request["op"] == "keys"
+                     else "text from Copilot")
+            error = self.start_taps(taps, label, on_finish)
+            if error:
+                on_finish(error)
+        AppHelper.callAfter(start)
+        finished.wait()
+        if outcome["error"]:
+            raise kb.BridgeError(outcome["error"])
+        return kb.describe(request, taps)
 
     # ----- capture -----
 
@@ -317,9 +380,9 @@ class Controller:
         self.refresh()
 
     def stop_capture(self, send=True):
-        self.cancel_typing()
         if not self.capturing:
             return
+        self.cancel_typing()
         self.capturing = False
         self.keys.clear()
         self.buttons = 0
@@ -336,6 +399,7 @@ class Controller:
                 if kind == AppKit.NSEventTypeKeyDown and event.keyCode() == kc.MAC_ESCAPE:
                     self.cancel_typing()
                 elif kind == AppKit.NSEventTypeFlagsChanged and kc.is_release_shortcut(event.modifierFlags()):
+                    self.cancel_typing()
                     self.stop_capture()
                 return None
             if kind == AppKit.NSEventTypeKeyDown and kc.is_paste_shortcut(
@@ -401,8 +465,25 @@ class Controller:
         self.window.makeKeyAndOrderFront_(None)
         AppKit.NSApp.activateIgnoringOtherApps_(True)
         self.start_connect()
+        if not self.args.smoke_test:
+            self.start_bridge()
+
+    def start_bridge(self):
+        bridge = kb.BridgeServer(self.handle_bridge_request)
+        try:
+            if bridge.bind():
+                bridge.start()
+                self.bridge = bridge
+            else:
+                self.set_notice("Another kvm_app.py is already serving Copilot requests.")
+        except (OSError, kb.BridgeError) as exc:
+            self.set_notice(f"Copilot bridge unavailable: {exc}")
 
     def shutdown(self):
+        if self.bridge:
+            self.bridge.close()
+            self.bridge = None
+        self.cancel_typing()
         self.stop_capture()
         self.disconnect()
 

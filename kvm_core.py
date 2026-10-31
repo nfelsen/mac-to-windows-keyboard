@@ -180,7 +180,10 @@ class Outbox:
         Raises ValueError before queueing anything if a character is unsupported.
         ``release_all`` cancels whatever has not been typed yet.
         """
-        taps = encode_text(text)
+        return self.taps(encode_text(text))
+
+    def taps(self, taps):
+        """Queue (modifier, key) taps, a final release, and a completion marker."""
         with self.cond:
             self.items.extend(("tap", modifier, key) for modifier, key in taps)
             self.items.append(("keys", 0, ()))

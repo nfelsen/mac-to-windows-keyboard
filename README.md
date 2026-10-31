@@ -10,7 +10,7 @@ Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
 
 - A CH9329 + CH340 "dual male" USB HID keyboard/mouse cable. Tested with [this CH9329+CH340 UART/TTL serial-to-USB HID keyboard and mouse cable (dual male USB-A)](https://www.aliexpress.us/item/3256811932570354.html).
 - macOS with Python 3 (standard library only, nothing to install) for the terminal script
-- [uv](https://docs.astral.sh/uv/) for the desktop app (it installs PyObjC automatically)
+- [uv](https://docs.astral.sh/uv/) for the desktop app and the Copilot MCP server (it installs PyObjC and the MCP SDK automatically)
 - Windows input layout set to **English (United States)**, with Caps Lock off
 
 ## Desktop app (keyboard + trackpad)
@@ -34,6 +34,49 @@ To type the Mac clipboard on Windows, copy text on the Mac, then press **⌘V** 
 Key mapping: Control → Ctrl, Option → Alt, Command → Windows key, Delete → Backspace, fn+Delete → Delete, Help/Insert → Insert. Keys are sent by physical position, so keep the Windows layout on English (US). Windows applies its own key repeat, pointer speed, and scroll direction for wheel steps; the app follows your Mac scroll direction.
 
 No macOS Accessibility or Input Monitoring permission is needed, because the app only reads events sent to its own window. As a result, macOS keeps a few system shortcuts and they are not forwarded: Cmd+Tab, Cmd+Space, Mission Control (Ctrl+arrows), Cmd+Opt+Esc, and media keys (hold fn to send F1–F12). Some Windows shortcuts that also involve Control + Option + Command can't be sent, because that chord releases control.
+
+## GitHub Copilot (MCP server)
+
+`kvm_mcp.py` is a local [MCP](https://modelcontextprotocol.io/) server that lets GitHub Copilot type on the Windows PC. Ask Copilot for a command (for example "list my Azure resource groups with az cli on the Windows machine"). Copilot proposes a tool call, you approve it, and the cable types it into the focused Windows window. Copilot can't see the Windows screen or any output, so it will ask you what happened. You can paste the output back into the chat.
+
+Tools:
+
+| Tool | What it does |
+| --- | --- |
+| `type_on_windows(text, press_enter=false, multiline=false)` | Types US-layout ASCII text. If any character is unsupported, nothing is typed. Enter is pressed only when `press_enter` is true. Line breaks are rejected unless `multiline` is true. Max 4000 characters. |
+| `press_keys(combo)` | Presses keys such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `win+r`, or `ctrl+a ctrl+c` (up to 10, in order). Modifiers: ctrl, shift, alt, win. |
+| `windows_keyboard_status()` | Shows the port, baud rate, whether Windows sees the keyboard, and Caps Lock. Types nothing. |
+
+Typing is refused while Windows Caps Lock is on or Windows doesn't see the keyboard. All keys are released after every call. If `kvm_app.py` is running, the server sends its requests through the app over a user-only Unix socket (`~/Library/Application Support/mac-to-windows-keyboard/kvm.sock`). The two share the cable, and Esc in the app stops a long typing request. Otherwise the server opens the cable itself for each call. Restart `kvm_app.py` after updating so it starts the socket.
+
+Check it from a terminal (types nothing):
+
+```bash
+uv run kvm_mcp.py --status
+```
+
+To add it in the GitHub Copilot app, open **Customize → MCP servers**, add a local (stdio) server named `windows-keyboard`, and use this command (replace the path with your clone; use the full path to `uv` from `which uv` if the app can't find it):
+
+```text
+uv run --directory /path/to/mac-to-windows-keyboard kvm_mcp.py
+```
+
+Or as JSON (for example in `~/.copilot/mcp-config.json`):
+
+```json
+{
+  "mcpServers": {
+    "windows-keyboard": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/mac-to-windows-keyboard", "kvm_mcp.py"],
+      "tools": ["*"]
+    }
+  }
+}
+```
+
+Keep tool approval turned on for this server: approving a tool call is what lets text reach Windows.
 
 ## Usage
 
@@ -89,5 +132,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge
 ```
