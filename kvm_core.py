@@ -52,14 +52,14 @@ DEVICE_FLAG_TO_HID = (
 NS_SHIFT, NS_CONTROL, NS_OPTION, NS_COMMAND = 1 << 17, 1 << 18, 1 << 19, 1 << 20
 
 RELEASE_SHORTCUT = "Control + Option + Command"
-PASTE_SHORTCUT = "Control + Option + V"
+PASTE_SHORTCUT = "⌘V"
 MAC_V, MAC_ESCAPE = 0x09, 0x35
 
 
 def is_paste_shortcut(key_code, flags):
-    """Ctrl+Option+V while capturing (Cmd+V is forwarded as Win+V)."""
-    return (key_code == MAC_V and flags & NS_CONTROL and flags & NS_OPTION
-            and not flags & NS_COMMAND)
+    """Cmd+V (without Control/Option) types the Mac clipboard; Win+V is never sent."""
+    return (key_code == MAC_V and flags & NS_COMMAND
+            and not flags & (NS_CONTROL | NS_OPTION))
 
 
 def modifier_byte(flags):

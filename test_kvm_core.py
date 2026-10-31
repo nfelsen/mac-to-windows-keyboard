@@ -47,11 +47,13 @@ class MappingTests(unittest.TestCase):
         self.assertFalse(kc.is_release_shortcut(kc.NS_COMMAND | kc.NS_SHIFT))
 
     def test_paste_shortcut(self):
-        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION))
-        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION | kc.NS_SHIFT))
-        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND))  # Win+V stays forwarded
-        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION | kc.NS_COMMAND))
-        self.assertFalse(kc.is_paste_shortcut(0x08, kc.NS_CONTROL | kc.NS_OPTION))
+        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND | 0x0008))
+        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND | kc.NS_SHIFT))
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, 0))
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION))
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND | kc.NS_CONTROL))
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND | kc.NS_OPTION))
+        self.assertFalse(kc.is_paste_shortcut(0x08, kc.NS_COMMAND))  # Cmd+C still forwarded
 
 
 class KeyboardStateTests(unittest.TestCase):

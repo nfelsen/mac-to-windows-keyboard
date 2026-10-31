@@ -37,7 +37,7 @@ MOUSE_MOVE = {AppKit.NSEventTypeMouseMoved, AppKit.NSEventTypeLeftMouseDragged,
               AppKit.NSEventTypeRightMouseDragged, AppKit.NSEventTypeOtherMouseDragged}
 
 MAPPING_NOTE = (
-    "Paste: ⌘V types the Mac clipboard on Windows (Control+Option+V while controlling). "
+    "Paste: ⌘V types the Mac clipboard on Windows (also while controlling; Win+V is not sent). "
     "US-layout ASCII only; Esc stops.\n"
     "Control → Ctrl   Option → Alt   Command → Windows key   Delete → Backspace\n"
     "Not forwarded (macOS keeps them): Cmd+Tab, Cmd+Space, Mission Control, "
@@ -338,13 +338,10 @@ class Controller:
                 elif kind == AppKit.NSEventTypeFlagsChanged and kc.is_release_shortcut(event.modifierFlags()):
                     self.stop_capture()
                 return None
-            if kind == AppKit.NSEventTypeKeyDown and event.keyCode() == kc.MAC_V:
-                flags = event.modifierFlags()
-                plain_cmd_v = (not self.capturing and flags & kc.NS_COMMAND
-                               and not flags & (kc.NS_CONTROL | kc.NS_OPTION))
-                if plain_cmd_v or (self.capturing and kc.is_paste_shortcut(event.keyCode(), flags)):
-                    self.paste_clipboard()
-                    return None
+            if kind == AppKit.NSEventTypeKeyDown and kc.is_paste_shortcut(
+                    event.keyCode(), event.modifierFlags()):
+                self.paste_clipboard()
+                return None
         if not self.capturing:
             if (kind == AppKit.NSEventTypeLeftMouseDown and event.window() == self.window
                     and self.capture_view.hitTest_(
