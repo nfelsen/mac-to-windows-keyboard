@@ -59,17 +59,75 @@ class MappingTests(unittest.TestCase):
 class KeyboardStateTests(unittest.TestCase):
     def test_press_release_and_limits(self):
         state = kc.KeyboardState()
-        self.assertEqual(state.press(4), (0, (4,)))
-        self.assertIsNone(state.press(4))
+        self.assertEqual(state.press(4), [(0, (4,))])
+        self.assertEqual(state.press(4), [])
         for usage in range(5, 10):
             state.press(usage)
-        self.assertIsNone(state.press(10))  # seventh key ignored
-        self.assertEqual(state.release(4), (0, (5, 6, 7, 8, 9)))
-        self.assertIsNone(state.release(4))
-        self.assertEqual(state.set_modifier(kc.LCTRL), (kc.LCTRL, (5, 6, 7, 8, 9)))
-        self.assertIsNone(state.set_modifier(kc.LCTRL))
+        self.assertEqual(state.press(10), [])  # seventh key ignored
+        self.assertEqual(state.release(4), [(0, (5, 6, 7, 8, 9))])
+        self.assertEqual(state.release(4), [])
+        self.assertEqual(state.set_modifier(kc.LCTRL), [(kc.LCTRL, (5, 6, 7, 8, 9))])
+        self.assertEqual(state.set_modifier(kc.LCTRL), [])
         state.clear()
         self.assertEqual(state.report(), (0, ()))
+
+
+class LazyWinTests(unittest.TestCase):
+    E = 0x08
+
+    def test_command_alone_waits_then_taps_win(self):
+        state = kc.KeyboardState()
+        self.assertEqual(state.set_modifier(kc.LWIN), [])
+        self.assertEqual(state.set_modifier(0), [(kc.LWIN, ()), (0, ())])
+
+    def test_command_shortcut_sends_win_with_key(self):
+        state = kc.KeyboardState()
+        reports = state.set_modifier(kc.RWIN)
+        reports += state.press(self.E) + state.release(self.E) + state.set_modifier(0)
+        self.assertEqual(reports, [(kc.RWIN, ()), (kc.RWIN, (self.E,)), (kc.RWIN, ()), (0, ())])
+
+    def test_chords_with_other_modifiers_do_not_tap_win(self):
+        state = kc.KeyboardState()
+        reports = state.set_modifier(kc.LWIN) + state.set_modifier(kc.LWIN | kc.LSHIFT)
+        reports += state.set_modifier(kc.LWIN) + state.set_modifier(0)
+        self.assertEqual(reports, [(kc.LSHIFT, ()), (0, ())])
+        reports = state.set_modifier(kc.LCTRL) + state.set_modifier(kc.LCTRL | kc.LWIN)
+        reports += state.set_modifier(kc.LCTRL) + state.set_modifier(0)
+        self.assertEqual(reports, [(kc.LCTRL, ()), (0, ())])
+
+    def test_click_while_command_held_does_not_tap_win(self):
+        state = kc.KeyboardState()
+        state.set_modifier(kc.LWIN)
+        state.use_win()
+        self.assertEqual(state.set_modifier(0), [])
+
+    def test_resync_after_cleared_state(self):
+        # Typing clears state while Command may still be held; the next keyDown resyncs.
+        state = kc.KeyboardState()
+        state.set_modifier(kc.LWIN)
+        state.clear()
+        self.assertEqual(state.set_modifier(kc.LWIN) + state.press(self.E),
+                         [(kc.LWIN, ()), (kc.LWIN, (self.E,))])
+        state.clear()
+        self.assertEqual(state.set_modifier(0), [])  # Command released after typing
+
+    def test_cmd_v_paste_never_sends_win(self):
+        """Mirror kvm_app: Command down, ⌘V intercepted for paste, Command up."""
+        state, outbox, sent = kc.KeyboardState(), kc.Outbox(), []
+
+        def send(reports):
+            sent.extend(reports)  # record before release_all can drop them from the queue
+            for report in reports:
+                outbox.keys(report)
+        send(state.set_modifier(kc.modifier_byte(kc.NS_COMMAND | 0x0008)))
+        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND))
+        state.clear()  # start_taps
+        outbox.release_all()
+        outbox.taps(wk.encode_text("az group list"))
+        send(state.set_modifier(0))  # Command released
+        self.assertEqual(sent, [])
+        self.assertFalse([item for item in outbox.items
+                          if item[0] in ("keys", "tap") and item[1] & kc.WIN_BITS])
 
 
 class MotionTests(unittest.TestCase):

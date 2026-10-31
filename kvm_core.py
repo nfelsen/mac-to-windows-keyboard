@@ -79,37 +79,77 @@ def is_release_shortcut(flags):
     return all(flags & mask for mask in (NS_CONTROL, NS_OPTION, NS_COMMAND))
 
 
+WIN_BITS = LWIN | RWIN
+
+
 class KeyboardState:
-    """Tracks held keys and modifiers; methods return a report tuple when it changes."""
+    """Tracks held keys and modifiers; methods return the reports to send (a list).
+
+    The Windows key is lazy: holding Command sends nothing until another key is
+    pressed, so Mac shortcuts the app handles itself (such as ⌘V) never reach
+    Windows as a lone Win press that opens Start. Tapping Command by itself
+    sends a Win tap on release, so the Start menu still works.
+    """
 
     def __init__(self):
-        self.modifier = 0
+        self.clear()
+
+    def clear(self):
+        self.modifier = 0      # modifier byte Windows has been sent
+        self.held = 0          # modifier keys physically held on the Mac
         self.keys = []
+        self.win_sent = False  # held Win has been sent to Windows
+        self.win_used = False  # held Win was part of a chord, so no tap on release
 
     def report(self):
         return self.modifier, tuple(self.keys)
 
-    def set_modifier(self, modifier):
-        if modifier == self.modifier:
-            return None
-        self.modifier = modifier
-        return self.report()
+    def _target(self):
+        return self.held if self.win_sent else self.held & ~WIN_BITS
+
+    def _sync(self):
+        if self._target() == self.modifier:
+            return []
+        self.modifier = self._target()
+        return [self.report()]
+
+    def set_modifier(self, held):
+        old, self.held = self.held, held
+        reports = []
+        if held & WIN_BITS and not old & WIN_BITS:
+            self.win_sent = False
+            self.win_used = bool(held & ~WIN_BITS or self.keys)
+        elif old & WIN_BITS and held & WIN_BITS:
+            if (old ^ held) & ~WIN_BITS:
+                self.win_used = True
+        elif old & WIN_BITS:
+            if not (self.win_sent or self.win_used):
+                # A lone Command tap: press and release Win now.
+                self.modifier |= old & WIN_BITS
+                reports.append(self.report())
+            self.win_sent = self.win_used = False
+        return reports + self._sync()
+
+    def use_win(self):
+        """A mouse click (or similar) while Command is held: no Win tap on release."""
+        if self.held & WIN_BITS:
+            self.win_used = True
 
     def press(self, usage):
         if usage in self.keys or len(self.keys) >= 6:
-            return None
+            return []
+        reports = []
+        if self.held & WIN_BITS and not self.win_sent:
+            self.win_sent = self.win_used = True
+            reports = self._sync()
         self.keys.append(usage)
-        return self.report()
+        return reports + [self.report()]
 
     def release(self, usage):
         if usage not in self.keys:
-            return None
+            return []
         self.keys.remove(usage)
-        return self.report()
-
-    def clear(self):
-        self.modifier = 0
-        self.keys = []
+        return [self.report()]
 
 
 class Accumulator:

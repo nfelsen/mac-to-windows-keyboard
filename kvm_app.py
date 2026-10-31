@@ -431,6 +431,8 @@ class Controller:
         elif kind == AppKit.NSEventTypeKeyDown:
             usage = kc.MAC_TO_HID.get(event.keyCode())
             if usage and not event.isARepeat():
+                # Resync modifiers in case flag changes were missed (e.g. during typing).
+                self.send_keys(self.keys.set_modifier(kc.modifier_byte(event.modifierFlags())))
                 self.send_keys(self.keys.press(usage))
         elif kind == AppKit.NSEventTypeKeyUp:
             usage = kc.MAC_TO_HID.get(event.keyCode())
@@ -443,6 +445,8 @@ class Controller:
         elif kind in MOUSE_DOWN or kind in MOUSE_UP:
             bit = BUTTON_BITS.get(event.buttonNumber(), 0)
             buttons = self.buttons | bit if kind in MOUSE_DOWN else self.buttons & ~bit
+            if kind in MOUSE_DOWN:
+                self.keys.use_win()
             if buttons != self.buttons:
                 self.buttons = buttons
                 self.outbox.mouse(buttons)
@@ -453,8 +457,8 @@ class Controller:
                 self.outbox.mouse(self.buttons, wheel=steps)
         return None
 
-    def send_keys(self, report):
-        if report is not None:
+    def send_keys(self, reports):
+        for report in reports:
             self.outbox.keys(report)
 
     def launched(self):
