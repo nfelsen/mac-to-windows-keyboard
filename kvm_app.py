@@ -33,6 +33,7 @@ for _type in (
 ):
     EVENT_MASK |= 1 << _type
 PANEL_HEIGHT = 160
+ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
 KEY_EVENTS = {AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp, AppKit.NSEventTypeFlagsChanged}
 MOUSE_DOWN = {AppKit.NSEventTypeLeftMouseDown, AppKit.NSEventTypeRightMouseDown, AppKit.NSEventTypeOtherMouseDown}
 MOUSE_UP = {AppKit.NSEventTypeLeftMouseUp, AppKit.NSEventTypeRightMouseUp, AppKit.NSEventTypeOtherMouseUp}
@@ -519,7 +520,13 @@ class Controller:
         for report in reports:
             self.outbox.keys(report)
 
+    def set_icon(self):
+        image = AppKit.NSImage.alloc().initWithContentsOfFile_(ICON_PATH)
+        if image is not None:  # missing or unreadable: keep the default icon
+            AppKit.NSApp.setApplicationIconImage_(image)
+
     def launched(self):
+        self.set_icon()
         self.build_menu()
         self.build_window()
         self.monitor = AppKit.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(

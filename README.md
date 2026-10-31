@@ -1,5 +1,7 @@
 # mac-to-windows-keyboard
 
+<img src="assets/icon.png" alt="App icon: a laptop connected to a USB keyboard cable" width="128">
+
 Type in a Mac terminal, or use the Mac keyboard and trackpad from a desktop window, and control a Windows computer through a CH340 + CH9329 USB keyboard/mouse-emulator cable. Windows sees a standard USB keyboard and mouse, so it needs no drivers or software.
 
 ```text
@@ -21,7 +23,7 @@ Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
 uv run kvm_app.py
 ```
 
-The first run creates `.venv` and installs the dependencies from `pyproject.toml`. The window shows the serial port, baud rate, whether Windows sees the keyboard, and the Windows Caps Lock state. Useful options:
+The app shows `assets/icon.png` as its Dock icon (`assets/icon.icns` is included for bundling). The first run creates `.venv` and installs the dependencies from `pyproject.toml`. The window shows the serial port, baud rate, whether Windows sees the keyboard, and the Windows Caps Lock state. Useful options:
 
 ```bash
 uv run kvm_app.py --mouse-scale 1.5        # faster pointer
