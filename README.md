@@ -31,6 +31,15 @@ uv run kvm_app.py --smoke-test             # connect, query status, exit; sends 
 
 To type the Mac clipboard on Windows, copy text on the Mac, then press **⌘V** in the app window, whether or not you are controlling Windows (or click **Type Clipboard on Windows**, or use Edit → Type Clipboard on Windows). Because ⌘V always types the Mac clipboard, it never sends Win+V (the Windows clipboard history) to Windows. The whole clipboard is checked first; if it contains anything other than US-layout ASCII (for example curly quotes), nothing is typed and the window names the character. Press **Esc** (or the release shortcut) to stop a long paste; any held keys are released. Line breaks are typed as Enter, so pasting into a terminal runs each line.
 
+The buttons under the capture area send Windows special keys and shortcuts without capturing the pointer:
+- Ctrl+Alt+Del, Task Manager (Ctrl+Shift+Esc), Alt+Tab, and Alt+F4.
+- Win, Win+R, Win+E, Win+L, Win+D, Win+Tab, and Snip (Win+Shift+S).
+- PrintScreen, Esc, Tab, Enter, Backspace, Insert, Delete, Home, End, Page Up, and Page Down.
+- The arrow keys and F1–F12.
+- Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z, Ctrl+A, and Ctrl+S.
+
+To build other combinations, click the **Hold for next key** toggles (Ctrl, Alt, Shift, Win) first. For example, click Ctrl and Shift, then →, to send Ctrl+Shift+Right. The toggles clear after one key. Every button releases all keys afterwards, and the buttons work even when Windows Caps Lock is on. Hover over a button to see the exact combination.
+
 Key mapping: Control → Ctrl, Option → Alt, Command → Windows key (sent only together with another key, so ⌘V never opens Start; tap Command alone to open Start), Delete → Backspace, fn+Delete → Delete, Help/Insert → Insert. Keys are sent by physical position, so keep the Windows layout on English (US). Windows applies its own key repeat, pointer speed, and scroll direction for wheel steps; the app follows your Mac scroll direction.
 
 No macOS Accessibility or Input Monitoring permission is needed, because the app only reads events sent to its own window. As a result, macOS keeps a few system shortcuts and they are not forwarded: Cmd+Tab, Cmd+Space, Mission Control (Ctrl+arrows), Cmd+Opt+Esc, and media keys (hold fn to send F1–F12). Some Windows shortcuts that also involve Control + Option + Command can't be sent, because that chord releases control.
@@ -132,5 +141,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel
 ```

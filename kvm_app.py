@@ -18,6 +18,7 @@ import Quartz
 from PyObjCTools import AppHelper
 
 import kvm_bridge as kb
+import kvm_panel as kp
 import kvm_core as kc
 import windows_keyboard as wk
 
@@ -31,6 +32,7 @@ for _type in (
     AppKit.NSEventTypeOtherMouseDown, AppKit.NSEventTypeOtherMouseUp, AppKit.NSEventTypeOtherMouseDragged,
 ):
     EVENT_MASK |= 1 << _type
+PANEL_HEIGHT = 160
 KEY_EVENTS = {AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp, AppKit.NSEventTypeFlagsChanged}
 MOUSE_DOWN = {AppKit.NSEventTypeLeftMouseDown, AppKit.NSEventTypeRightMouseDown, AppKit.NSEventTypeOtherMouseDown}
 MOUSE_UP = {AppKit.NSEventTypeLeftMouseUp, AppKit.NSEventTypeRightMouseUp, AppKit.NSEventTypeOtherMouseUp}
@@ -89,6 +91,8 @@ class Controller:
         self.typing_label = ""
         self.typing_finish = None
         self.bridge = None
+        self.panel = kp.Panel()
+        self.sticky_buttons = []
         self.target = self.leds = 0
         self.cable_text = "Connecting…"
         self.keys = kc.KeyboardState()
@@ -106,7 +110,7 @@ class Controller:
         style = (AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
                  | AppKit.NSWindowStyleMaskMiniaturizable)
         self.window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((200, 200), (620, 380)), style, AppKit.NSBackingStoreBuffered, False)
+            ((200, 200), (620, 380 + PANEL_HEIGHT)), style, AppKit.NSBackingStoreBuffered, False)
         self.window.setTitle_("Mac → Windows (CH9329)")
         self.window.setDelegate_(self.delegate)
         self.window.setAcceptsMouseMovedEvents_(True)
@@ -114,31 +118,84 @@ class Controller:
         content = self.window.contentView()
 
         self.status = AppKit.NSTextField.labelWithString_("")
-        self.status.setFrame_(((20, 320), (580, 44)))
+        self.status.setFrame_(((20, 320 + PANEL_HEIGHT), (580, 44)))
         self.status.setFont_(AppKit.NSFont.monospacedSystemFontOfSize_weight_(12, 0))
         content.addSubview_(self.status)
 
-        self.capture_view = CaptureView.alloc().initWithFrame_(((20, 116), (580, 196)))
+        self.capture_view = CaptureView.alloc().initWithFrame_(((20, 116 + PANEL_HEIGHT), (580, 196)))
         content.addSubview_(self.capture_view)
 
         button = AppKit.NSButton.buttonWithTitle_target_action_(
             "Type Clipboard on Windows", self.delegate, "typeClipboard:")
-        button.setFrame_(((14, 78), (230, 32)))
+        button.setFrame_(((14, 78 + PANEL_HEIGHT), (230, 32)))
         content.addSubview_(button)
 
         self.notice = AppKit.NSTextField.wrappingLabelWithString_("")
-        self.notice.setFrame_(((250, 76), (350, 34)))
+        self.notice.setFrame_(((250, 76 + PANEL_HEIGHT), (350, 34)))
         self.notice.setFont_(AppKit.NSFont.systemFontOfSize_(11))
         content.addSubview_(self.notice)
 
         note = AppKit.NSTextField.wrappingLabelWithString_(MAPPING_NOTE)
-        note.setFrame_(((20, 8), (580, 64)))
+        note.setFrame_(((20, 8 + PANEL_HEIGHT), (580, 64)))
         note.setFont_(AppKit.NSFont.systemFontOfSize_(11))
         note.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         content.addSubview_(note)
+        self.build_panel(content)
 
         self.window.center()
         self.refresh()
+
+    def panel_button(self, content, title, action, tag, frame, tooltip=None):
+        button = AppKit.NSButton.buttonWithTitle_target_action_(title, self.delegate, action)
+        button.setTag_(tag)
+        button.setFrame_(frame)
+        button.setFont_(AppKit.NSFont.systemFontOfSize_(11))
+        button.setBezelStyle_(AppKit.NSBezelStyleSmallSquare)
+        # Never take keyboard focus, so Space/Return in the window don't click it.
+        button.setRefusesFirstResponder_(True)
+        if tooltip:
+            button.setToolTip_(tooltip)
+        content.addSubview_(button)
+        return button
+
+    def build_panel(self, content):
+        """Windows special-key buttons below the capture area; clicking them never captures."""
+        left, width, height, gap = 20, 580, 24, 3
+        y = 8
+        label = AppKit.NSTextField.labelWithString_("Hold for next key:")
+        label.setFrame_(((left, y + 4), (110, 16)))
+        label.setFont_(AppKit.NSFont.systemFontOfSize_(11))
+        content.addSubview_(label)
+        for index, (title, _) in enumerate(kp.STICKY):
+            button = self.panel_button(content, title, "stickyKey:", index,
+                                       ((left + 114 + index * 64, y), (60, height)),
+                                       f"Hold {title} for the next button")
+            button.setButtonType_(AppKit.NSButtonTypePushOnPushOff)
+            self.sticky_buttons.append(button)
+        index = len(kp.BUTTONS)
+        for row in reversed(kp.ROWS):
+            y += height + gap
+            index -= len(row)
+            weights = [max(len(title), 4) + 3 for title, _ in row]
+            unit = (width - gap * (len(row) - 1)) / sum(weights)
+            x = left
+            for column, (title, combo) in enumerate(row):
+                size = weights[column] * unit
+                self.panel_button(content, title, "panelKey:", index + column,
+                                  ((x, y), (size, height)), combo)
+                x += size + gap
+
+    def panel_key(self, index):
+        taps, label = self.panel.press(index)
+        for button in self.sticky_buttons:
+            button.setState_(AppKit.NSControlStateValueOff)
+        error = self.start_taps(taps, f"keys {label}", check_caps=False)
+        if error:
+            self.set_notice(error)
+
+    def toggle_sticky(self, index, button):
+        on = self.panel.toggle(index)
+        button.setState_(AppKit.NSControlStateValueOn if on else AppKit.NSControlStateValueOff)
 
     def build_menu(self):
         menubar = AppKit.NSMenu.alloc().init()
@@ -158,7 +215,7 @@ class Controller:
     def refresh(self):
         self.status.setStringValue_(self.cable_text)
         if self.typing:
-            title = "Typing clipboard on Windows…"
+            title = f"Typing {self.typing_label} on Windows…"
             subtitle = "Press Esc to stop. Other input is paused until it finishes."
         elif self.capturing:
             title = "Controlling Windows"
@@ -276,7 +333,7 @@ class Controller:
         if error:
             self.set_notice(error)
 
-    def start_taps(self, taps, label, on_finish=None):
+    def start_taps(self, taps, label, on_finish=None, check_caps=True):
         """Queue validated taps; returns an error string instead if refused.
 
         ``on_finish(error_or_None)`` is called on the main thread when typing
@@ -287,7 +344,8 @@ class Controller:
         if not self.keyboard:
             return "Cable not connected; nothing was typed."
         try:
-            kb.check_ready(self.target, self.leds)
+            # Shortcuts work with Caps Lock on; only typed text needs it off.
+            kb.check_ready(self.target, self.leds if check_caps else 0)
         except kb.BridgeError as exc:
             return str(exc)
         # Drop any keys or buttons Windows thinks are held before typing.
@@ -500,6 +558,12 @@ class Delegate(AppKit.NSObject):
 
     def typeClipboard_(self, sender):
         self.controller.paste_clipboard()
+
+    def panelKey_(self, sender):
+        self.controller.panel_key(sender.tag())
+
+    def stickyKey_(self, sender):
+        self.controller.toggle_sticky(sender.tag(), sender)
 
     def windowDidResignKey_(self, notification):
         self.controller.stop_capture()

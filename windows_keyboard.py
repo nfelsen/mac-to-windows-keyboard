@@ -34,7 +34,7 @@ CTRL, SHIFT, ALT, WIN = 1, 2, 4, 8
 KEYS = {
     "enter": 0x28, "esc": 0x29, "backspace": 0x2A, "tab": 0x2B,
     "space": 0x2C, "insert": 0x49, "home": 0x4A, "pageup": 0x4B,
-    "delete": 0x4C, "end": 0x4D, "pagedown": 0x4E,
+    "delete": 0x4C, "end": 0x4D, "pagedown": 0x4E, "printscreen": 0x46,
     "right": 0x4F, "left": 0x50, "down": 0x51, "up": 0x52,
 }
 KEYS.update({f"f{i}": 0x39 + i for i in range(1, 13)})

@@ -32,7 +32,7 @@ MODIFIER_NAMES = {
 }
 KEY_ALIASES = {
     "return": "enter", "escape": "esc", "del": "delete", "ins": "insert",
-    "pgup": "pageup", "pgdn": "pagedown", "bksp": "backspace",
+    "pgup": "pageup", "pgdn": "pagedown", "bksp": "backspace", "prtsc": "printscreen",
     "arrowup": "up", "arrowdown": "down", "arrowleft": "left", "arrowright": "right",
 }
 
