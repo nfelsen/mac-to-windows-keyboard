@@ -29,6 +29,8 @@ uv run kvm_app.py --port /dev/cu.usbserial-2130 --baud 57600
 uv run kvm_app.py --smoke-test             # connect, query status, exit; sends no keyboard or mouse reports
 ```
 
+To type the Mac clipboard on Windows, copy text on the Mac, then press **⌘V** in the app window (or click **Type Clipboard on Windows**, or use Edit → Type Clipboard on Windows). While you are controlling Windows, use **Control + Option + V** instead, because ⌘V is forwarded as Win+V. The whole clipboard is checked first; if it contains anything other than US-layout ASCII (for example curly quotes), nothing is typed and the window names the character. Press **Esc** (or the release shortcut) to stop a long paste; any held keys are released. Line breaks are typed as Enter, so pasting into a terminal runs each line.
+
 Key mapping: Control → Ctrl, Option → Alt, Command → Windows key, Delete → Backspace, fn+Delete → Delete, Help/Insert → Insert. Keys are sent by physical position, so keep the Windows layout on English (US). Windows applies its own key repeat, pointer speed, and scroll direction for wheel steps; the app follows your Mac scroll direction.
 
 No macOS Accessibility or Input Monitoring permission is needed, because the app only reads events sent to its own window. As a result, macOS keeps a few system shortcuts and they are not forwarded: Cmd+Tab, Cmd+Space, Mission Control (Ctrl+arrows), Cmd+Opt+Esc, and media keys (hold fn to send F1–F12). Some Windows shortcuts that also involve Control + Option + Command can't be sent, because that chord releases control.

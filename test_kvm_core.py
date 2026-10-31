@@ -46,6 +46,13 @@ class MappingTests(unittest.TestCase):
         self.assertFalse(kc.is_release_shortcut(kc.NS_CONTROL | kc.NS_OPTION))
         self.assertFalse(kc.is_release_shortcut(kc.NS_COMMAND | kc.NS_SHIFT))
 
+    def test_paste_shortcut(self):
+        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION))
+        self.assertTrue(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION | kc.NS_SHIFT))
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_COMMAND))  # Win+V stays forwarded
+        self.assertFalse(kc.is_paste_shortcut(kc.MAC_V, kc.NS_CONTROL | kc.NS_OPTION | kc.NS_COMMAND))
+        self.assertFalse(kc.is_paste_shortcut(0x08, kc.NS_CONTROL | kc.NS_OPTION))
+
 
 class KeyboardStateTests(unittest.TestCase):
     def test_press_release_and_limits(self):
@@ -127,6 +134,27 @@ class OutboxTests(unittest.TestCase):
         with self.assertRaises(EOFError):
             box.take(0)
 
+    def test_text_queues_taps_then_release_and_done(self):
+        box = kc.Outbox()
+        self.assertEqual(box.text("aB\r\n"), 3)
+        self.assertEqual(self.drain(box), [
+            ("tap", 0, 4), ("tap", wk.SHIFT, 5), ("tap", 0, 0x28),
+            ("keys", 0, ()), ("text_done",),
+        ])
+
+    def test_unsupported_text_queues_nothing(self):
+        box = kc.Outbox()
+        with self.assertRaisesRegex(ValueError, "U\\+2019.*nothing in this block was sent"):
+            box.text("it\N{RIGHT SINGLE QUOTATION MARK}s")
+        self.assertEqual(self.drain(box), [])
+
+    def test_release_all_cancels_text(self):
+        box = kc.Outbox()
+        box.text("hello")
+        box.take(0)
+        box.release_all()
+        self.assertEqual(self.drain(box), [("keys", 0, ()), ("buttons", 0, 0, 0, 0)])
+
 
 class SenderTests(unittest.TestCase):
     def test_packets(self):
@@ -174,6 +202,23 @@ class SenderTests(unittest.TestCase):
         self.assertFalse(sender.is_alive())
         self.assertEqual(infos, [b"\x38\x01\x00"])
         self.assertEqual(port.writes, [wk.packet(0x02, bytes(8)), wk.packet(0x01)])
+
+    def test_thread_types_text_and_reports_done(self):
+        port = FakePort([OK_KEY] * 5)  # two taps (press+release each) + final release
+        box = kc.Outbox()
+        done = threading.Event()
+        sender = kc.Sender(wk.Keyboard(port, delay=0), box, lambda _: None, self.fail,
+                           info_interval=5, on_text_done=done.set)
+        box.text("A1")
+        sender.start()
+        self.assertTrue(done.wait(2))
+        box.close()
+        sender.join(2)
+        self.assertEqual(port.writes, [
+            wk.packet(0x02, bytes((wk.SHIFT, 0, 4, 0, 0, 0, 0, 0))), wk.packet(0x02, bytes(8)),
+            wk.packet(0x02, bytes((0, 0, 0x1E, 0, 0, 0, 0, 0))), wk.packet(0x02, bytes(8)),
+            wk.packet(0x02, bytes(8)),
+        ])
 
     def test_thread_reports_errors(self):
         port = FakePort([])  # no reply -> CableError

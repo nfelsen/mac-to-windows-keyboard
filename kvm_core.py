@@ -8,7 +8,7 @@ order from a background thread. No GUI imports, so it is unit-testable.
 import threading
 from collections import deque
 
-from windows_keyboard import CableError
+from windows_keyboard import CableError, encode_text
 
 # macOS virtual key code (kVK_*) -> USB HID keyboard usage. Physical keys, so
 # the Windows layout decides which character appears (use English (US)).
@@ -52,6 +52,14 @@ DEVICE_FLAG_TO_HID = (
 NS_SHIFT, NS_CONTROL, NS_OPTION, NS_COMMAND = 1 << 17, 1 << 18, 1 << 19, 1 << 20
 
 RELEASE_SHORTCUT = "Control + Option + Command"
+PASTE_SHORTCUT = "Control + Option + V"
+MAC_V, MAC_ESCAPE = 0x09, 0x35
+
+
+def is_paste_shortcut(key_code, flags):
+    """Ctrl+Option+V while capturing (Cmd+V is forwarded as Win+V)."""
+    return (key_code == MAC_V and flags & NS_CONTROL and flags & NS_OPTION
+            and not flags & NS_COMMAND)
 
 
 def modifier_byte(flags):
@@ -166,6 +174,20 @@ class Outbox:
                 self.items.append(("move" if dx or dy or wheel else "buttons", buttons, dx, dy, wheel))
             self.cond.notify()
 
+    def text(self, text):
+        """Queue validated US-layout text as key taps; returns the tap count.
+
+        Raises ValueError before queueing anything if a character is unsupported.
+        ``release_all`` cancels whatever has not been typed yet.
+        """
+        taps = encode_text(text)
+        with self.cond:
+            self.items.extend(("tap", modifier, key) for modifier, key in taps)
+            self.items.append(("keys", 0, ()))
+            self.items.append(("text_done",))
+            self.cond.notify()
+        return len(taps)
+
     def release_all(self):
         """Drop anything pending and release every key and button."""
         with self.cond:
@@ -201,6 +223,8 @@ class Outbox:
 def send_item(keyboard, item):
     if item[0] == "keys":
         keyboard.keys(item[1], item[2])
+    elif item[0] == "tap":
+        keyboard.tap(item[1], item[2])
     else:
         keyboard.mouse(*item[1:])
 
@@ -212,13 +236,14 @@ class Sender(threading.Thread):
     After an error the thread stops; nothing further is sent.
     """
 
-    def __init__(self, keyboard, outbox, on_info, on_error, info_interval=2.0):
+    def __init__(self, keyboard, outbox, on_info, on_error, info_interval=2.0, on_text_done=None):
         super().__init__(daemon=True)
         self.keyboard = keyboard
         self.outbox = outbox
         self.on_info = on_info
         self.on_error = on_error
         self.info_interval = info_interval
+        self.on_text_done = on_text_done or (lambda: None)
 
     def run(self):
         try:
@@ -229,6 +254,8 @@ class Sender(threading.Thread):
                     return
                 if item is None:
                     self.on_info(self.keyboard.info())
+                elif item[0] == "text_done":
+                    self.on_text_done()
                 else:
                     send_item(self.keyboard, item)
         except (CableError, OSError) as exc:

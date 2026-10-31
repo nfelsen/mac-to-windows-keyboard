@@ -30,12 +30,15 @@ for _type in (
     AppKit.NSEventTypeOtherMouseDown, AppKit.NSEventTypeOtherMouseUp, AppKit.NSEventTypeOtherMouseDragged,
 ):
     EVENT_MASK |= 1 << _type
+KEY_EVENTS = {AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp, AppKit.NSEventTypeFlagsChanged}
 MOUSE_DOWN = {AppKit.NSEventTypeLeftMouseDown, AppKit.NSEventTypeRightMouseDown, AppKit.NSEventTypeOtherMouseDown}
 MOUSE_UP = {AppKit.NSEventTypeLeftMouseUp, AppKit.NSEventTypeRightMouseUp, AppKit.NSEventTypeOtherMouseUp}
 MOUSE_MOVE = {AppKit.NSEventTypeMouseMoved, AppKit.NSEventTypeLeftMouseDragged,
               AppKit.NSEventTypeRightMouseDragged, AppKit.NSEventTypeOtherMouseDragged}
 
 MAPPING_NOTE = (
+    "Paste: ⌘V types the Mac clipboard on Windows (Control+Option+V while controlling). "
+    "US-layout ASCII only; Esc stops.\n"
     "Control → Ctrl   Option → Alt   Command → Windows key   Delete → Backspace\n"
     "Not forwarded (macOS keeps them): Cmd+Tab, Cmd+Space, Mission Control, "
     "Cmd+Opt+Esc, media keys (hold fn for F1–F12)."
@@ -81,6 +84,8 @@ class Controller:
         self.port = self.keyboard = self.sender = self.outbox = None
         self.connecting = False
         self.capturing = False
+        self.typing = False
+        self.target = self.leds = 0
         self.cable_text = "Connecting…"
         self.keys = kc.KeyboardState()
         self.buttons = 0
@@ -109,11 +114,21 @@ class Controller:
         self.status.setFont_(AppKit.NSFont.monospacedSystemFontOfSize_weight_(12, 0))
         content.addSubview_(self.status)
 
-        self.capture_view = CaptureView.alloc().initWithFrame_(((20, 80), (580, 230)))
+        self.capture_view = CaptureView.alloc().initWithFrame_(((20, 116), (580, 196)))
         content.addSubview_(self.capture_view)
 
+        button = AppKit.NSButton.buttonWithTitle_target_action_(
+            "Type Clipboard on Windows", self.delegate, "typeClipboard:")
+        button.setFrame_(((14, 78), (230, 32)))
+        content.addSubview_(button)
+
+        self.notice = AppKit.NSTextField.wrappingLabelWithString_("")
+        self.notice.setFrame_(((250, 76), (350, 34)))
+        self.notice.setFont_(AppKit.NSFont.systemFontOfSize_(11))
+        content.addSubview_(self.notice)
+
         note = AppKit.NSTextField.wrappingLabelWithString_(MAPPING_NOTE)
-        note.setFrame_(((20, 12), (580, 60)))
+        note.setFrame_(((20, 8), (580, 64)))
         note.setFont_(AppKit.NSFont.systemFontOfSize_(11))
         note.setTextColor_(AppKit.NSColor.secondaryLabelColor())
         content.addSubview_(note)
@@ -128,17 +143,26 @@ class Controller:
         menu = AppKit.NSMenu.alloc().init()
         menu.addItemWithTitle_action_keyEquivalent_("Quit", "terminate:", "q")
         item.setSubmenu_(menu)
+        edit_item = AppKit.NSMenuItem.alloc().init()
+        menubar.addItem_(edit_item)
+        edit = AppKit.NSMenu.alloc().initWithTitle_("Edit")
+        paste = edit.addItemWithTitle_action_keyEquivalent_("Type Clipboard on Windows", "typeClipboard:", "v")
+        paste.setTarget_(self.delegate)
+        edit_item.setSubmenu_(edit)
         AppKit.NSApp.setMainMenu_(menubar)
 
     def refresh(self):
         self.status.setStringValue_(self.cable_text)
-        if self.capturing:
+        if self.typing:
+            title = "Typing clipboard on Windows…"
+            subtitle = "Press Esc to stop. Other input is paused until it finishes."
+        elif self.capturing:
             title = "Controlling Windows"
             subtitle = (f"Press {kc.RELEASE_SHORTCUT} together to release.\n"
-                        "Switching away from this window also releases.")
+                        f"{kc.PASTE_SHORTCUT} types the Mac clipboard.")
         elif self.keyboard:
             title = "Click here to control Windows"
-            subtitle = f"Release with {kc.RELEASE_SHORTCUT}."
+            subtitle = f"Release with {kc.RELEASE_SHORTCUT}.  ⌘V types the Mac clipboard."
         elif self.connecting:
             title, subtitle = "Connecting to cable…", ""
         else:
@@ -180,7 +204,8 @@ class Controller:
         self.sender = kc.Sender(
             keyboard, self.outbox,
             lambda value: AppHelper.callAfter(self.show_info, value),
-            lambda exc: AppHelper.callAfter(self.connection_lost, exc))
+            lambda exc: AppHelper.callAfter(self.connection_lost, exc),
+            on_text_done=lambda: AppHelper.callAfter(self.text_done))
         self.sender.start()
         self.show_info(info)
         if self.args.smoke_test:
@@ -198,6 +223,7 @@ class Controller:
         if not self.keyboard:
             return
         _, target, leds = info
+        self.target, self.leds = target, leds
         self.cable_text = (
             f"Cable: {self.path}  {self.rate} baud  firmware 0x{self.firmware:02X}\n"
             f"Windows target: {'connected' if target == 1 else 'NOT connected (replug the CH9329 end)'}"
@@ -214,6 +240,7 @@ class Controller:
             self.finish_smoke_test(1)
 
     def connection_lost(self, exc):
+        self.typing = False
         self.stop_capture(send=False)
         self.disconnect()
         self.cable_text = f"Cable error: {exc}"
@@ -228,10 +255,56 @@ class Controller:
             self.port.close()
         self.port = self.keyboard = self.sender = self.outbox = None
 
+    # ----- clipboard -----
+
+    def set_notice(self, text):
+        self.notice.setStringValue_(text)
+
+    def paste_clipboard(self):
+        if self.typing:
+            return
+        if not self.keyboard:
+            return self.set_notice("Cable not connected; nothing was typed.")
+        if self.target != 1:
+            return self.set_notice("Windows does not see the keyboard; nothing was typed.")
+        if self.leds & 2:
+            return self.set_notice("Turn Caps Lock off on Windows first; nothing was typed.")
+        text = AppKit.NSPasteboard.generalPasteboard().stringForType_(AppKit.NSPasteboardTypeString)
+        if not text:
+            return self.set_notice("The Mac clipboard has no text.")
+        try:
+            wk.encode_text(text)
+        except ValueError as exc:
+            return self.set_notice(str(exc))
+        # Drop any keys Windows thinks are held (e.g. Ctrl+Alt from the shortcut).
+        self.keys.clear()
+        self.buttons = 0
+        self.outbox.release_all()
+        count = self.outbox.text(text)
+        self.typing = True
+        self.set_notice(f"Typing {count} characters… press Esc to stop.")
+        self.refresh()
+
+    def cancel_typing(self):
+        if not self.typing:
+            return
+        self.typing = False
+        self.keys.clear()
+        if self.outbox:
+            self.outbox.release_all()
+        self.set_notice("Stopped typing; the rest of the clipboard was not sent.")
+        self.refresh()
+
+    def text_done(self):
+        if self.typing:
+            self.typing = False
+            self.set_notice("Clipboard typed on Windows.")
+            self.refresh()
+
     # ----- capture -----
 
     def start_capture(self):
-        if self.capturing or not self.keyboard:
+        if self.capturing or self.typing or not self.keyboard:
             return
         self.capturing = True
         self.keys.clear()
@@ -244,6 +317,7 @@ class Controller:
         self.refresh()
 
     def stop_capture(self, send=True):
+        self.cancel_typing()
         if not self.capturing:
             return
         self.capturing = False
@@ -257,6 +331,20 @@ class Controller:
 
     def handle_event(self, event):
         kind = event.type()
+        if kind in KEY_EVENTS and event.window() == self.window or self.capturing:
+            if self.typing:
+                if kind == AppKit.NSEventTypeKeyDown and event.keyCode() == kc.MAC_ESCAPE:
+                    self.cancel_typing()
+                elif kind == AppKit.NSEventTypeFlagsChanged and kc.is_release_shortcut(event.modifierFlags()):
+                    self.stop_capture()
+                return None
+            if kind == AppKit.NSEventTypeKeyDown and event.keyCode() == kc.MAC_V:
+                flags = event.modifierFlags()
+                plain_cmd_v = (not self.capturing and flags & kc.NS_COMMAND
+                               and not flags & (kc.NS_CONTROL | kc.NS_OPTION))
+                if plain_cmd_v or (self.capturing and kc.is_paste_shortcut(event.keyCode(), flags)):
+                    self.paste_clipboard()
+                    return None
         if not self.capturing:
             if (kind == AppKit.NSEventTypeLeftMouseDown and event.window() == self.window
                     and self.capture_view.hitTest_(
@@ -327,6 +415,9 @@ class Delegate(AppKit.NSObject):
 
     def applicationDidFinishLaunching_(self, notification):
         self.controller.launched()
+
+    def typeClipboard_(self, sender):
+        self.controller.paste_clipboard()
 
     def windowDidResignKey_(self, notification):
         self.controller.stop_capture()
