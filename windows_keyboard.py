@@ -5,7 +5,7 @@ Usage:
     python3 windows_keyboard.py --check
     python3 windows_keyboard.py
     python3 windows_keyboard.py --live
-
+    python3 windows_keyboard.py --set-baud 57600
 The Windows input layout must be English (United States), with Caps Lock off.
 Only input to this program is forwarded. Commands never run on the Mac.
 No third-party Python packages are required.
@@ -67,6 +67,13 @@ ESCAPES = {
 }
 
 
+CMD_GET_INFO, CMD_KEYBOARD = 0x01, 0x02
+CMD_GET_PARA_CFG, CMD_SET_PARA_CFG, CMD_RESET = 0x08, 0x09, 0x0F
+CONFIG_SIZE = 50
+# Auto-detect order: preferred rate first, then the factory default.
+BAUD_RATES = [57600, 9600, 115200, 38400, 19200]
+
+
 class CableError(Exception):
     pass
 
@@ -74,6 +81,17 @@ class CableError(Exception):
 def packet(command, payload=b""):
     body = bytes((0x57, 0xAB, 0, command, len(payload))) + payload
     return body + bytes((sum(body) & 0xFF,))
+
+
+def config_baud(config):
+    """Baud rate is bytes 3-6 (big-endian) of the 50-byte parameter config."""
+    return int.from_bytes(config[3:7], "big")
+
+
+def with_baud(config, rate):
+    if len(config) != CONFIG_SIZE:
+        raise CableError(f"Invalid parameter config length {len(config)}; expected {CONFIG_SIZE}.")
+    return bytes(config[:3]) + rate.to_bytes(4, "big") + bytes(config[7:])
 
 
 def encode_text(text):
@@ -161,7 +179,7 @@ class SerialPort:
 
 
 class Keyboard:
-    def __init__(self, port, delay=0.02):
+    def __init__(self, port, delay=0.01):
         self.port = port
         self.delay = delay
 
@@ -181,14 +199,35 @@ class Keyboard:
         return data
 
     def info(self):
-        data = self.command(1)
+        data = self.command(CMD_GET_INFO)
         if len(data) != 8:
             raise CableError(f"Invalid device-info reply: {data.hex()}")
         # Version, enumeration state, LED flags, then five reserved bytes.
         return data[:3]
 
+    def get_config(self):
+        data = self.command(CMD_GET_PARA_CFG)
+        if len(data) != CONFIG_SIZE:
+            raise CableError(f"Invalid parameter-config reply length {len(data)}.")
+        return data
+
+    def set_config(self, config):
+        if len(config) != CONFIG_SIZE:
+            raise CableError(f"Refusing to write config of length {len(config)}.")
+        result = self.command(CMD_SET_PARA_CFG, config)
+        if result != b"\x00":
+            raise CableError(f"Config write rejected: {result.hex() or 'empty response'}")
+
+    def reset(self):
+        # The chip may restart before its acknowledgement is complete;
+        # reconnecting afterwards is the real verification.
+        try:
+            self.command(CMD_RESET)
+        except CableError:
+            pass
+
     def report(self, modifier=0, key=0):
-        result = self.command(2, bytes((modifier, 0, key, 0, 0, 0, 0, 0)))
+        result = self.command(CMD_KEYBOARD, bytes((modifier, 0, key, 0, 0, 0, 0, 0)))
         if result != b"\x00":
             raise CableError(f"Keyboard report rejected: {result.hex() or 'empty response'}")
 
@@ -208,7 +247,7 @@ class Keyboard:
 
 def connect(path, baud, delay):
     failures = []
-    rates = [int(baud)] if baud != "auto" else [9600, 115200]
+    rates = [int(baud)] if baud != "auto" else BAUD_RATES
     for rate in rates:
         port = SerialPort(path, rate)
         try:
@@ -226,6 +265,34 @@ def connect(path, baud, delay):
         + "\n".join(failures)
         + "\nCheck CH340 -> Mac, CH9329 -> Windows, and try --baud with the seller's setting."
     )
+
+
+def set_baud(path, port, keyboard, current, rate, delay, settle=1.5):
+    """Persist a new CH9329 UART baud rate. Sends no keyboard reports.
+
+    Takes ownership of ``port`` and returns the reconnected (port, keyboard, info).
+    """
+    try:
+        config = keyboard.get_config()
+        print(f"Stored baud rate: {config_baud(config)} (answering at {current})", flush=True)
+        if config_baud(config) == rate and current == rate:
+            print("Already set; nothing written.")
+            info = keyboard.info()
+            return port, keyboard, info
+        keyboard.set_config(with_baud(config, rate))
+        keyboard.reset()
+    finally:
+        port.close()
+    time.sleep(settle)
+    port, keyboard, info, _ = connect(path, str(rate), delay)
+    try:
+        stored = config_baud(keyboard.get_config())
+        if stored != rate:
+            raise CableError(f"Cable answers at {rate} but reports a stored rate of {stored}.")
+    except BaseException:
+        port.close()
+        raise
+    return port, keyboard, info
 
 
 HELP = """Line mode: edit locally, then Enter sends the line AND Enter to Windows.
@@ -373,17 +440,23 @@ def live_mode(keyboard):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--port", help="Mac serial device; auto-selects a single USB serial port")
-    parser.add_argument("--baud", default="auto", choices=["auto", "9600", "19200", "38400", "57600", "115200"])
+    rate_choices = [str(rate) for rate in sorted(BAUD_RATES)]
+    parser.add_argument("--baud", default="auto", choices=["auto"] + rate_choices,
+                        help="Serial rate (default: auto-detect, trying 57600 then 9600)")
+    parser.add_argument("--set-baud", choices=rate_choices, metavar="RATE",
+                        help="Persist a new CH9329 baud rate (" + ", ".join(rate_choices) + "); sends NO keystrokes")
     parser.add_argument("--check", action="store_true", help="Query cable status only; sends NO keystrokes")
     parser.add_argument("--list", action="store_true", help="List USB serial ports without opening them")
     parser.add_argument("--live", action="store_true", help="Forward keystrokes immediately; Ctrl+] exits")
     parser.add_argument("--no-enter", action="store_true", help="Line mode: send text without executing it")
-    parser.add_argument("--delay", type=float, default=0.02, help="Seconds between HID reports (default: 0.02)")
+    parser.add_argument("--delay", type=float, default=0.01, help="Seconds between HID reports (default: 0.01)")
     args = parser.parse_args(argv)
     if not math.isfinite(args.delay) or args.delay < 0.01:
         parser.error("--delay must be a finite number of at least 0.01 seconds")
     if args.live and args.no_enter:
         parser.error("--live and --no-enter cannot be combined")
+    if args.set_baud and (args.live or args.no_enter or args.check):
+        parser.error("--set-baud cannot be combined with --check, --live, or --no-enter")
     ports = sorted(set(glob.glob("/dev/cu.usb*") + glob.glob("/dev/cu.wchusbserial*")))
     if args.list:
         print("\n".join(ports) if ports else "No USB serial ports found.")
@@ -392,9 +465,12 @@ def main(argv=None):
         if len(ports) != 1:
             parser.error("Connect the CH340 end to Mac, then select a device with --port. Use --list.")
         args.port = ports[0]
-    if not args.check and not sys.stdin.isatty():
+    if not args.check and not args.set_baud and not sys.stdin.isatty():
         parser.error("Run interactively in a terminal; piped input is not supported.")
     port, keyboard, info, baud = connect(args.port, args.baud, args.delay)
+    if args.set_baud:
+        port, keyboard, info = set_baud(args.port, port, keyboard, baud, int(args.set_baud), args.delay)
+        baud = int(args.set_baud)
     try:
         version, connected, leds = info
         print(
@@ -403,6 +479,12 @@ def main(argv=None):
             f"Caps Lock: {'ON' if leds & 2 else 'off'}",
             flush=True,
         )
+        if args.set_baud:
+            print(f"Baud rate is now {baud}. No keystrokes were sent.")
+            if connected != 1:
+                print("If Windows does not see the keyboard within a few seconds, "
+                      "unplug and replug the CH9329 (Windows) end.")
+            return 0
         if args.check:
             print("Status query only. No keystrokes were sent.")
             return 0 if connected == 1 else 1

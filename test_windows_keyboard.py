@@ -134,6 +134,117 @@ class ProtocolTests(unittest.TestCase):
         with patch.object(wk, "terminal_byte", side_effect=lambda *a: next(data)):
             self.assertEqual(wk.escape_sequence(0), b"[A")
 
+
+FACTORY_CONFIG = bytes((0x80, 0x80, 0x00)) + (9600).to_bytes(4, "big") + bytes(range(7, 50))
+
+
+class BaudTests(unittest.TestCase):
+    def test_config_packets(self):
+        self.assertEqual(wk.packet(0x08).hex(), "57ab0008000a")
+        self.assertEqual(wk.packet(0x0F).hex(), "57ab000f0011")
+        frame = wk.packet(0x09, wk.with_baud(FACTORY_CONFIG, 115200))
+        self.assertEqual(frame[:12].hex(), "57ab0009328080000001c200")
+        self.assertEqual(len(frame), 5 + 50 + 1)
+
+    def test_with_baud_changes_only_baud_field(self):
+        for rate in (9600, 115200):
+            with self.subTest(rate=rate):
+                new = wk.with_baud(FACTORY_CONFIG, rate)
+                self.assertEqual(wk.config_baud(new), rate)
+                self.assertEqual(new[:3], FACTORY_CONFIG[:3])
+                self.assertEqual(new[7:], FACTORY_CONFIG[7:])
+        self.assertEqual(wk.config_baud(FACTORY_CONFIG), 9600)
+        with self.assertRaises(wk.CableError):
+            wk.with_baud(FACTORY_CONFIG[:49], 9600)
+
+    def test_get_and_set_config(self):
+        port = FakePort([wk.packet(0x88, FACTORY_CONFIG), wk.packet(0x89, b"\x00")])
+        keyboard = wk.Keyboard(port)
+        self.assertEqual(keyboard.get_config(), FACTORY_CONFIG)
+        keyboard.set_config(FACTORY_CONFIG)
+        self.assertEqual(port.writes, [wk.packet(0x08), wk.packet(0x09, FACTORY_CONFIG)])
+
+    def test_config_errors(self):
+        with self.assertRaises(wk.CableError):
+            wk.Keyboard(FakePort([wk.packet(0x88, bytes(10))])).get_config()
+        with self.assertRaises(wk.CableError):
+            wk.Keyboard(FakePort([wk.packet(0x89, b"\x01")])).set_config(FACTORY_CONFIG)
+        port = FakePort([])
+        with self.assertRaises(wk.CableError):
+            wk.Keyboard(port).set_config(bytes(49))
+        self.assertEqual(port.writes, [])
+
+    def test_reset_tolerates_missing_ack(self):
+        port = FakePort([])
+        wk.Keyboard(port).reset()
+        self.assertEqual(port.writes, [wk.packet(0x0F)])
+
+    def test_set_baud_flow_sends_no_keyboard_reports(self):
+        old_port = FakePort([
+            wk.packet(0x88, FACTORY_CONFIG), wk.packet(0x89, b"\x00"), wk.packet(0x8F, b"\x00"),
+        ])
+        old_port.close = unittest.mock.Mock()
+        new_config = wk.with_baud(FACTORY_CONFIG, 115200)
+        new_port = FakePort([wk.packet(0x88, new_config)])
+        new_port.close = unittest.mock.Mock()
+        info = b"\x31\x01\x00"
+        with patch.object(wk, "connect", return_value=(new_port, wk.Keyboard(new_port), info, 115200)) as connect, \
+                patch("sys.stdout", new_callable=io.StringIO):
+            result = wk.set_baud("/dev/x", old_port, wk.Keyboard(old_port), 9600, 115200, 0.01, settle=0)
+        self.assertEqual(result[0], new_port)
+        self.assertEqual(result[2], info)
+        old_port.close.assert_called_once()
+        new_port.close.assert_not_called()
+        connect.assert_called_once_with("/dev/x", "115200", 0.01)
+        self.assertEqual(old_port.writes, [
+            wk.packet(0x08), wk.packet(0x09, new_config), wk.packet(0x0F),
+        ])
+        for frame in old_port.writes + new_port.writes:
+            self.assertNotEqual(frame[3], 0x02)
+
+    def test_set_baud_detects_unchanged_stored_rate(self):
+        old_port = FakePort([wk.packet(0x88, FACTORY_CONFIG), wk.packet(0x89, b"\x00")])
+        old_port.close = unittest.mock.Mock()
+        new_port = FakePort([wk.packet(0x88, FACTORY_CONFIG)])
+        new_port.close = unittest.mock.Mock()
+        with patch.object(wk, "connect", return_value=(new_port, wk.Keyboard(new_port), b"", 115200)), \
+                patch("sys.stdout", new_callable=io.StringIO):
+            with self.assertRaises(wk.CableError):
+                wk.set_baud("/dev/x", old_port, wk.Keyboard(old_port), 9600, 115200, 0.01, settle=0)
+        new_port.close.assert_called_once()
+
+    def test_auto_detect_prefers_57600_then_9600(self):
+        self.assertEqual(wk.BAUD_RATES[:2], [57600, 9600])
+        self.assertEqual(sorted(wk.BAUD_RATES), [9600, 19200, 38400, 57600, 115200])
+        opened = []
+
+        class Port:
+            def __init__(self, path, rate):
+                opened.append(rate)
+                self.rate = rate
+
+            def close(self):
+                pass
+
+        def info(keyboard):
+            if keyboard.port.rate != 9600:
+                raise wk.CableError("no reply")
+            return b"\x31\x01\x00"
+
+        with patch.object(wk, "SerialPort", Port), patch.object(wk.Keyboard, "info", info):
+            port, keyboard, _, rate = wk.connect("/dev/x", "auto", 0.01)
+        self.assertEqual(opened, [57600, 9600])
+        self.assertEqual(rate, 9600)
+        self.assertEqual(keyboard.delay, 0.01)
+
+    def test_defaults_and_argument_validation(self):
+        self.assertEqual(wk.Keyboard(FakePort([])).delay, 0.01)
+        with patch("sys.stderr", new_callable=io.StringIO):
+            for argv in (["--set-baud", "14400"], ["--set-baud", "115200", "--live"],
+                         ["--set-baud", "9600", "--check"]):
+                with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                    wk.main(argv)
+
     def test_serial_roundtrip_with_fragmented_reply(self):
         master, slave = pty.openpty()
         port = wk.SerialPort(os.ttyname(slave), 9600)

@@ -8,7 +8,7 @@ Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
 
 ## Requirements
 
-- A CH9329 + CH340 "dual male" USB HID keyboard/mouse cable
+- A CH9329 + CH340 "dual male" USB HID keyboard/mouse cable. Tested with [this CH9329+CH340 UART/TTL serial-to-USB HID keyboard and mouse cable (dual male USB-A)](https://www.aliexpress.us/item/3256811932570354.html).
 - macOS with Python 3 (standard library only, nothing to install)
 - Windows input layout set to **English (United States)**, with Caps Lock off
 
@@ -44,7 +44,17 @@ python3 windows_keyboard.py --live
 
 Press **Ctrl+]** to exit live mode. Ctrl+C is forwarded to Windows.
 
-Other options: `--port /dev/cu.usbserial-XXXX`, `--list`, `--baud`, `--delay`.
+Other options: `--port /dev/cu.usbserial-XXXX`, `--list`, `--baud`, `--delay` (default 0.01 s between key reports).
+
+## Baud rate
+
+The CH9329 ships at 9600 baud. The script auto-detects the rate, trying 57600 first, then 9600, 115200, 38400, and 19200. Switching the cable to 57600 makes typing faster:
+
+```bash
+python3 windows_keyboard.py --set-baud 57600
+```
+
+This reads the chip's 50-byte parameter config (command `0x08`), changes only the baud field (bytes 3–6, big-endian), writes it back (`0x09`), soft-resets the chip (`0x0F`), and reconnects at the new rate to verify. It sends no keystrokes. The setting persists across power cycles. After the reset, Windows may not re-detect the keyboard; if `--check` shows `Target USB: NOT connected` or the cable stops answering, unplug and replug the CH9329 (Windows) end. To go back to the factory rate, run `--set-baud 9600`. Supported rates: 9600, 19200, 38400, 57600, 115200. 115200 is available but WCH notes it is unsupported if the chip runs at 3.3 V, and it was unreliable on the tested cable.
 
 ## Notes
 
