@@ -1,6 +1,6 @@
 # mac-to-windows-keyboard
 
-Type in a Mac terminal and have the keystrokes appear on a Windows computer, using a CH340 + CH9329 USB keyboard-emulator cable. Windows sees a standard USB keyboard, so it needs no drivers or software.
+Type in a Mac terminal, or use the Mac keyboard and trackpad from a desktop window, and control a Windows computer through a CH340 + CH9329 USB keyboard/mouse-emulator cable. Windows sees a standard USB keyboard and mouse, so it needs no drivers or software.
 
 ```text
 Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
@@ -9,8 +9,29 @@ Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
 ## Requirements
 
 - A CH9329 + CH340 "dual male" USB HID keyboard/mouse cable. Tested with [this CH9329+CH340 UART/TTL serial-to-USB HID keyboard and mouse cable (dual male USB-A)](https://www.aliexpress.us/item/3256811932570354.html).
-- macOS with Python 3 (standard library only, nothing to install)
+- macOS with Python 3 (standard library only, nothing to install) for the terminal script
+- [uv](https://docs.astral.sh/uv/) for the desktop app (it installs PyObjC automatically)
 - Windows input layout set to **English (United States)**, with Caps Lock off
+
+## Desktop app (keyboard + trackpad)
+
+`kvm_app.py` opens a window. Click it, and the Mac keyboard, trackpad, mouse buttons, and scrolling control Windows. Press **Control + Option + Command** together to give control back to the Mac. Switching to another app (for example with Cmd+Tab) or closing the window also releases control.
+
+```bash
+uv run kvm_app.py
+```
+
+The first run creates `.venv` and installs the dependencies from `pyproject.toml`. The window shows the serial port, baud rate, whether Windows sees the keyboard, and the Windows Caps Lock state. Useful options:
+
+```bash
+uv run kvm_app.py --mouse-scale 1.5        # faster pointer
+uv run kvm_app.py --port /dev/cu.usbserial-2130 --baud 57600
+uv run kvm_app.py --smoke-test             # connect, query status, exit; sends no keyboard or mouse reports
+```
+
+Key mapping: Control → Ctrl, Option → Alt, Command → Windows key, Delete → Backspace, fn+Delete → Delete, Help/Insert → Insert. Keys are sent by physical position, so keep the Windows layout on English (US). Windows applies its own key repeat, pointer speed, and scroll direction for wheel steps; the app follows your Mac scroll direction.
+
+No macOS Accessibility or Input Monitoring permission is needed, because the app only reads events sent to its own window. As a result, macOS keeps a few system shortcuts and they are not forwarded: Cmd+Tab, Cmd+Space, Mission Control (Ctrl+arrows), Cmd+Opt+Esc, and media keys (hold fn to send F1–F12). Some Windows shortcuts that also involve Control + Option + Command can't be sent, because that chord releases control.
 
 ## Usage
 
@@ -66,5 +87,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard
+python3 -m unittest -v test_windows_keyboard test_kvm_core
 ```

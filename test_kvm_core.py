@@ -1,0 +1,192 @@
+import threading
+import unittest
+
+import kvm_core as kc
+import windows_keyboard as wk
+from test_windows_keyboard import FakePort
+
+OK_KEY = wk.packet(0x82, b"\x00")
+OK_MOUSE = wk.packet(0x85, b"\x00")
+
+
+class MappingTests(unittest.TestCase):
+    def test_letters_digits_and_specials(self):
+        self.assertEqual(kc.MAC_TO_HID[0x00], 0x04)  # a
+        self.assertEqual(kc.MAC_TO_HID[0x06], 0x1D)  # z
+        self.assertEqual(kc.MAC_TO_HID[0x1D], 0x27)  # 0
+        self.assertEqual(kc.MAC_TO_HID[0x24], 0x28)  # return
+        self.assertEqual(kc.MAC_TO_HID[0x33], 0x2A)  # delete -> backspace
+        self.assertEqual(kc.MAC_TO_HID[0x75], 0x4C)  # forward delete
+        self.assertEqual(kc.MAC_TO_HID[0x7E], 0x52)  # up
+        self.assertEqual(kc.MAC_TO_HID[0x7A], 0x3A)  # F1
+        self.assertEqual(kc.MAC_TO_HID[0x6F], 0x45)  # F12
+
+    def test_table_is_unique_and_complete(self):
+        values = list(kc.MAC_TO_HID.values())
+        self.assertEqual(len(values), len(set(values)))
+        for usage in range(0x04, 0x46):  # letters through F12, except non-US hash and Caps Lock
+            if usage not in (0x32, kc.HID_CAPS_LOCK):
+                self.assertIn(usage, values, hex(usage))
+
+    def test_modifier_byte_left_right(self):
+        self.assertEqual(kc.modifier_byte(0), 0)
+        self.assertEqual(kc.modifier_byte(kc.NS_CONTROL | 0x0001), kc.LCTRL)
+        self.assertEqual(kc.modifier_byte(kc.NS_CONTROL | 0x2000), kc.RCTRL)
+        self.assertEqual(kc.modifier_byte(kc.NS_SHIFT | 0x0004), kc.RSHIFT)
+        self.assertEqual(kc.modifier_byte(kc.NS_OPTION | 0x0020), kc.LALT)
+        self.assertEqual(kc.modifier_byte(kc.NS_COMMAND | 0x0008), kc.LWIN)
+        self.assertEqual(kc.modifier_byte(kc.NS_COMMAND | 0x0010), kc.RWIN)
+
+    def test_modifier_byte_without_device_bits(self):
+        flags = kc.NS_SHIFT | kc.NS_CONTROL | kc.NS_OPTION | kc.NS_COMMAND
+        self.assertEqual(kc.modifier_byte(flags), kc.LSHIFT | kc.LCTRL | kc.LALT | kc.LWIN)
+
+    def test_release_shortcut(self):
+        self.assertTrue(kc.is_release_shortcut(kc.NS_CONTROL | kc.NS_OPTION | kc.NS_COMMAND))
+        self.assertFalse(kc.is_release_shortcut(kc.NS_CONTROL | kc.NS_OPTION))
+        self.assertFalse(kc.is_release_shortcut(kc.NS_COMMAND | kc.NS_SHIFT))
+
+
+class KeyboardStateTests(unittest.TestCase):
+    def test_press_release_and_limits(self):
+        state = kc.KeyboardState()
+        self.assertEqual(state.press(4), (0, (4,)))
+        self.assertIsNone(state.press(4))
+        for usage in range(5, 10):
+            state.press(usage)
+        self.assertIsNone(state.press(10))  # seventh key ignored
+        self.assertEqual(state.release(4), (0, (5, 6, 7, 8, 9)))
+        self.assertIsNone(state.release(4))
+        self.assertEqual(state.set_modifier(kc.LCTRL), (kc.LCTRL, (5, 6, 7, 8, 9)))
+        self.assertIsNone(state.set_modifier(kc.LCTRL))
+        state.clear()
+        self.assertEqual(state.report(), (0, ()))
+
+
+class MotionTests(unittest.TestCase):
+    def test_accumulator_keeps_fractions(self):
+        acc = kc.Accumulator(0.5)
+        self.assertEqual([acc.add(1) for _ in range(4)], [0, 1, 0, 1])
+        acc = kc.Accumulator(1.0)
+        self.assertEqual([acc.add(-0.6), acc.add(-0.6)], [0, -1])
+
+    def test_scroll_steps(self):
+        acc = kc.Accumulator()
+        self.assertEqual(kc.scroll_steps(acc, 10, True), 0)
+        self.assertEqual(kc.scroll_steps(acc, 10, True), 1)
+        self.assertEqual(kc.scroll_steps(acc, -45, True), -2)
+        self.assertEqual(kc.scroll_steps(acc, 0.1, False), 1)
+        self.assertEqual(kc.scroll_steps(acc, -3, False), -3)
+        self.assertEqual(kc.scroll_steps(acc, 0, False), 0)
+
+    def test_clamp_chunks(self):
+        self.assertEqual(kc.clamp_chunks(0, 0, 0), [(0, 0, 0)])
+        self.assertEqual(kc.clamp_chunks(300, -5, 1), [(127, -5, 1), (127, 0, 0), (46, 0, 0)])
+
+
+class OutboxTests(unittest.TestCase):
+    def drain(self, box):
+        items = []
+        while True:
+            item = box.take(0)
+            if item is None:
+                return items
+            items.append(item)
+
+    def test_order_merge_and_split(self):
+        box = kc.Outbox()
+        box.mouse(0, 100, 0)
+        box.mouse(0, 100, 5)
+        box.keys((0, (4,)))
+        box.mouse(1)
+        box.mouse(1, 3, 3)
+        box.mouse(1, -1, 0)
+        self.assertEqual(self.drain(box), [
+            ("move", 0, 127, 5, 0), ("move", 0, 73, 0, 0),
+            ("keys", 0, (4,)), ("buttons", 1, 0, 0, 0), ("move", 1, 2, 3, 0),
+        ])
+
+    def test_moves_with_different_buttons_not_merged(self):
+        box = kc.Outbox()
+        box.mouse(0, 1, 0)
+        box.mouse(1, 1, 0)
+        self.assertEqual(len(self.drain(box)), 2)
+
+    def test_release_all_drops_pending(self):
+        box = kc.Outbox()
+        box.keys((kc.LCTRL, (4,)))
+        box.mouse(0, 5, 5)
+        box.release_all()
+        self.assertEqual(self.drain(box), [("keys", 0, ()), ("buttons", 0, 0, 0, 0)])
+
+    def test_close(self):
+        box = kc.Outbox()
+        box.keys((0, ()))
+        box.close()
+        self.assertEqual(box.take(0), ("keys", 0, ()))
+        with self.assertRaises(EOFError):
+            box.take(0)
+
+
+class SenderTests(unittest.TestCase):
+    def test_packets(self):
+        port = FakePort([OK_KEY, OK_MOUSE, OK_MOUSE, OK_MOUSE])
+        keyboard = wk.Keyboard(port)
+        kc.send_item(keyboard, ("keys", kc.LCTRL | kc.LSHIFT, (4, 5)))
+        kc.send_item(keyboard, ("move", 1, -1, 2, 0))
+        kc.send_item(keyboard, ("move", 0, 0, 0, -1))
+        kc.send_item(keyboard, ("buttons", 0, 0, 0, 0))
+        self.assertEqual(port.writes, [
+            wk.packet(0x02, bytes((3, 0, 4, 5, 0, 0, 0, 0))),
+            wk.packet(0x05, bytes((1, 1, 0xFF, 2, 0))),
+            wk.packet(0x05, bytes((1, 0, 0, 0, 0xFF))),
+            wk.packet(0x05, bytes((1, 0, 0, 0, 0))),
+        ])
+
+    def test_mouse_range_checked(self):
+        port = FakePort([])
+        with self.assertRaises(ValueError):
+            wk.Keyboard(port).mouse(0, 128, 0)
+        self.assertEqual(port.writes, [])
+
+    def test_rejected_mouse_report(self):
+        port = FakePort([wk.packet(0x85, b"\x01")])
+        with self.assertRaises(wk.CableError):
+            wk.Keyboard(port).mouse(0, 1, 0)
+
+    def test_thread_sends_polls_and_stops(self):
+        info = wk.packet(0x81, b"\x38\x01\x00" + bytes(5))
+        port = FakePort([OK_KEY, info])
+        box = kc.Outbox()
+        polled = threading.Event()
+        infos = []
+
+        def on_info(value):
+            infos.append(value)
+            box.close()
+            polled.set()
+
+        sender = kc.Sender(wk.Keyboard(port), box, on_info, self.fail, info_interval=0.01)
+        box.keys((0, ()))
+        sender.start()
+        self.assertTrue(polled.wait(2))
+        sender.join(2)
+        self.assertFalse(sender.is_alive())
+        self.assertEqual(infos, [b"\x38\x01\x00"])
+        self.assertEqual(port.writes, [wk.packet(0x02, bytes(8)), wk.packet(0x01)])
+
+    def test_thread_reports_errors(self):
+        port = FakePort([])  # no reply -> CableError
+        box = kc.Outbox()
+        errors = []
+        sender = kc.Sender(wk.Keyboard(port), box, lambda _: None, errors.append, info_interval=5)
+        box.mouse(0, 1, 1)
+        sender.start()
+        sender.join(2)
+        self.assertFalse(sender.is_alive())
+        self.assertEqual(len(errors), 1)
+        self.assertIsInstance(errors[0], wk.CableError)
+
+
+if __name__ == "__main__":
+    unittest.main()

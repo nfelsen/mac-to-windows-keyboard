@@ -67,7 +67,7 @@ ESCAPES = {
 }
 
 
-CMD_GET_INFO, CMD_KEYBOARD = 0x01, 0x02
+CMD_GET_INFO, CMD_KEYBOARD, CMD_MOUSE_REL = 0x01, 0x02, 0x05
 CMD_GET_PARA_CFG, CMD_SET_PARA_CFG, CMD_RESET = 0x08, 0x09, 0x0F
 CONFIG_SIZE = 50
 # Auto-detect order: preferred rate first, then the factory default.
@@ -227,9 +227,24 @@ class Keyboard:
             pass
 
     def report(self, modifier=0, key=0):
-        result = self.command(CMD_KEYBOARD, bytes((modifier, 0, key, 0, 0, 0, 0, 0)))
+        self.keys(modifier, (key,) if key else ())
+
+    def keys(self, modifier, keys):
+        """Send a boot keyboard report with up to six held keys."""
+        keys = bytes(keys[:6])
+        result = self.command(CMD_KEYBOARD, bytes((modifier, 0)) + keys + bytes(6 - len(keys)))
         if result != b"\x00":
             raise CableError(f"Keyboard report rejected: {result.hex() or 'empty response'}")
+
+    def mouse(self, buttons=0, dx=0, dy=0, wheel=0):
+        """Send a relative mouse report; deltas must be within -127..127."""
+        for value in (dx, dy, wheel):
+            if not -127 <= value <= 127:
+                raise ValueError(f"Mouse delta out of range: {value}")
+        payload = bytes((1, buttons & 0x07, dx & 0xFF, dy & 0xFF, wheel & 0xFF))
+        result = self.command(CMD_MOUSE_REL, payload)
+        if result != b"\x00":
+            raise CableError(f"Mouse report rejected: {result.hex() or 'empty response'}")
 
     def tap(self, modifier, key):
         try:
@@ -243,6 +258,10 @@ class Keyboard:
     def text(self, text):
         for modifier, key in encode_text(text):
             self.tap(modifier, key)
+
+
+def usb_serial_ports():
+    return sorted(set(glob.glob("/dev/cu.usb*") + glob.glob("/dev/cu.wchusbserial*")))
 
 
 def connect(path, baud, delay):
@@ -457,7 +476,7 @@ def main(argv=None):
         parser.error("--live and --no-enter cannot be combined")
     if args.set_baud and (args.live or args.no_enter or args.check):
         parser.error("--set-baud cannot be combined with --check, --live, or --no-enter")
-    ports = sorted(set(glob.glob("/dev/cu.usb*") + glob.glob("/dev/cu.wchusbserial*")))
+    ports = usb_serial_ports()
     if args.list:
         print("\n".join(ports) if ports else "No USB serial ports found.")
         return 0

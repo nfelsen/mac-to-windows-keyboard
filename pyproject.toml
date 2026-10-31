@@ -1,0 +1,13 @@
+[project]
+name = "mac-to-windows-keyboard"
+version = "0.2.0"
+description = "Control a Windows PC from a Mac through a CH340 + CH9329 USB HID cable"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "pyobjc-framework-Cocoa>=10.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=10.0; sys_platform == 'darwin'",
+]
+
+[tool.uv]
+package = false
