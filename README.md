@@ -81,21 +81,17 @@ Check it from a terminal (types nothing):
 uv run kvm_mcp.py --status
 ```
 
-To add it in the GitHub Copilot app, open **Customize → MCP servers**, add a local (stdio) server named `windows-keyboard`, and use this command (replace the path with your clone; use the full path to `uv` from `which uv` if the app can't find it):
+To set it up in your AI assistant, click **Connect AI Assistant…** at the bottom of the app window (or Help → Connect AI Assistant). Pick your assistant to get a config filled in with your real `uv` and repository paths, then click **Copy**. Supported: GitHub Copilot app, Copilot CLI, VS Code, Claude Desktop, Claude Code, Cursor, Windsurf, Codex CLI, Gemini CLI and Zed. The same instructions are in [docs/mcp-setup.md](docs/mcp-setup.md), or print them from a terminal with `python3 kvm_mcp_setup.py`.
 
-```text
-uv run --directory /path/to/mac-to-windows-keyboard kvm_mcp.py
-```
-
-Or as JSON (for example in `~/.copilot/mcp-config.json`):
+For example, in the GitHub Copilot app open **Customize → MCP**, add a local (stdio) server named `windows-keyboard`, or merge this into `~/.copilot/mcp-config.json` (use absolute paths; GUI apps don't read your shell `PATH`, so take `uv`'s path from `which uv`):
 
 ```json
 {
   "mcpServers": {
     "windows-keyboard": {
       "type": "stdio",
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/mac-to-windows-keyboard", "kvm_mcp.py"],
+      "command": "/Users/YOU/.local/bin/uv",
+      "args": ["run", "--directory", "/Users/YOU/src/mac-to-windows-keyboard", "kvm_mcp.py"],
       "tools": ["*"]
     }
   }
@@ -158,5 +154,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app test_kvm_mcp_setup
 ```

@@ -21,6 +21,7 @@ from PyObjCTools import AppHelper
 import kvm_bridge as kb
 import kvm_panel as kp
 import kvm_core as kc
+import kvm_mcp_setup as ms
 import windows_keyboard as wk
 
 BUTTON_BITS = {0: 1, 1: 2, 2: 4}  # NSEvent buttonNumber -> HID left/right/middle
@@ -238,6 +239,7 @@ class Controller:
         self.bridge = None
         self.panel = kp.Panel()
         self.popover = None
+        self.setup_window = None
         self.path, self.rate, self.firmware = None, 0, 0
         self.target = self.leds = 0
         self.typing_total = 0
@@ -455,7 +457,11 @@ class Controller:
         help_button.setAction_("showHelp:")
         help_button.setRefusesFirstResponder_(True)
         help_button.setToolTip_("Key mapping and limitations")
-        return stack([note, spacer, help_button], spacing=8, alignment=AppKit.NSLayoutAttributeCenterY)
+        ai_button = self.control_button(" Connect AI Assistant…", "showMcpSetup:", "sparkles",
+                                        "Let GitHub Copilot, Claude, Cursor and others type on Windows (MCP setup)")
+        ai_button.setControlSize_(AppKit.NSControlSizeSmall)
+        ai_button.setFont_(AppKit.NSFont.systemFontOfSize_(11))
+        return stack([note, spacer, ai_button, help_button], spacing=8, alignment=AppKit.NSLayoutAttributeCenterY)
 
     def show_help(self, sender):
         popover = AppKit.NSPopover.alloc().init()
@@ -470,6 +476,97 @@ class Controller:
         popover.setContentViewController_(controller)
         popover.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, AppKit.NSRectEdgeMaxY)
         self.popover = popover
+
+    def show_mcp_setup(self):
+        """Window with copy-pasteable MCP server configs for common AI assistants."""
+        if self.setup_window is not None:
+            self.setup_window.makeKeyAndOrderFront_(None)
+            return
+        self.setup_uv, self.setup_repo = ms.find_uv(), ms.REPO
+        window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            ((0, 0), (640, 520)),
+            AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
+            | AppKit.NSWindowStyleMaskResizable | AppKit.NSWindowStyleMaskFullSizeContentView,
+            AppKit.NSBackingStoreBuffered, False)
+        window.setTitle_("Connect an AI Assistant")
+        window.setTitlebarAppearsTransparent_(True)
+        window.setReleasedWhenClosed_(False)
+        background = AppKit.NSVisualEffectView.alloc().init()
+        background.setMaterial_(AppKit.NSVisualEffectMaterialWindowBackground)
+        window.setContentView_(background)
+
+        title = label("Connect an AI assistant", 17, AppKit.NSFontWeightBold)
+        intro = label(ms.INTRO, 12, text_color="secondaryLabelColor", wrap=True)
+        self.harness_popup = AppKit.NSPopUpButton.alloc().initWithFrame_pullsDown_(((0, 0), (220, 26)), False)
+        for harness in ms.HARNESSES:
+            self.harness_popup.addItemWithTitle_(harness.name)
+        self.harness_popup.setTarget_(self.delegate)
+        self.harness_popup.setAction_("pickHarness:")
+        picker = stack([label("Assistant:", 13), self.harness_popup], spacing=8,
+                       alignment=AppKit.NSLayoutAttributeFirstBaseline)
+        self.setup_where = label("", 12, AppKit.NSFontWeightSemibold, wrap=True)
+        self.setup_steps = label("", 12, wrap=True)
+        for field in (intro, self.setup_where, self.setup_steps):
+            field.setSelectable_(True)
+
+        scroll = AppKit.NSTextView.scrollableTextView()
+        scroll.setBorderType_(AppKit.NSBezelBorder)
+        self.setup_code = scroll.documentView()
+        self.setup_code.setEditable_(False)
+        self.setup_code.setRichText_(False)
+        self.setup_code.setFont_(AppKit.NSFont.monospacedSystemFontOfSize_weight_(12, AppKit.NSFontWeightRegular))
+        self.setup_code.setTextContainerInset_((8, 8))
+        scroll.heightAnchor().constraintGreaterThanOrEqualToConstant_(170).setActive_(True)
+        scroll.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationVertical)
+
+        copy = self.control_button(" Copy", "copySetup:", "doc.on.doc", "Copy this snippet")
+        copy.setBezelColor_(AppKit.NSColor.controlAccentColor())
+        if hasattr(copy, "setTintProminence_"):
+            copy.setTintProminence_(AppKit.NSTintProminencePrimary)
+        self.setup_copied = label("", 12, text_color="secondaryLabelColor")
+        spacer = AppKit.NSView.alloc().init()
+        spacer.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        docs = self.control_button(" Full Guide on GitHub", "openMcpDocs:", "arrow.up.right.square",
+                                   ms.DOCS_URL)
+        buttons = stack([copy, self.setup_copied, spacer, docs], spacing=8,
+                        alignment=AppKit.NSLayoutAttributeCenterY)
+        paths = label(f"uv: {self.setup_uv}\nRepository: {self.setup_repo}", 11,
+                      text_color="tertiaryLabelColor", wrap=True)
+        paths.setSelectable_(True)
+        safety = label(ms.SAFETY, 11, text_color="secondaryLabelColor", wrap=True)
+        rows = [title, intro, picker, self.setup_where, self.setup_steps, scroll, buttons, safety, paths]
+        main = stack(rows, vertical=True, spacing=10, alignment=AppKit.NSLayoutAttributeLeading)
+        main.setCustomSpacing_afterView_(4, title)
+        main.setCustomSpacing_afterView_(14, intro)
+        background.addSubview_(main)
+        pin(main, background, (40, 20, 20, 20))
+        for row in rows:
+            if row is not picker:
+                match_width(row, main)
+        for field in (intro, self.setup_where, self.setup_steps, safety, paths):
+            field.setPreferredMaxLayoutWidth_(600)
+        window.setContentMinSize_((560, 480))
+        self.setup_window = window
+        self.pick_harness()
+        window.center()
+        window.makeKeyAndOrderFront_(None)
+
+    def pick_harness(self):
+        harness = ms.HARNESSES[max(0, self.harness_popup.indexOfSelectedItem())]
+        setup = ms.setup(harness.id, self.setup_uv, self.setup_repo)
+        self.setup_where.setStringValue_(setup.where)
+        self.setup_steps.setStringValue_(setup.steps)
+        self.setup_code.setString_(setup.code)
+        self.setup_copied.setStringValue_("")
+
+    def copy_setup(self):
+        board = AppKit.NSPasteboard.generalPasteboard()
+        board.clearContents()
+        board.setString_forType_(self.setup_code.string(), AppKit.NSPasteboardTypeString)
+        self.setup_copied.setStringValue_("Copied ✓")
+
+    def open_mcp_docs(self):
+        AppKit.NSWorkspace.sharedWorkspace().openURL_(Foundation.NSURL.URLWithString_(ms.DOCS_URL))
 
     def panel_key(self, index):
         taps, label_text = self.panel.press(index)
@@ -502,7 +599,18 @@ class Controller:
         edit = AppKit.NSMenu.alloc().initWithTitle_("Edit")
         paste = edit.addItemWithTitle_action_keyEquivalent_("Type Clipboard on Windows", "typeClipboard:", "v")
         paste.setTarget_(self.delegate)
+        edit.addItem_(AppKit.NSMenuItem.separatorItem())
+        edit.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
+        edit.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
         edit_item.setSubmenu_(edit)
+        help_item = AppKit.NSMenuItem.alloc().init()
+        menubar.addItem_(help_item)
+        help_menu = AppKit.NSMenu.alloc().initWithTitle_("Help")
+        for title, action in (("Connect AI Assistant (MCP Setup)…", "showMcpSetup:"),
+                              ("MCP Setup Guide on GitHub", "openMcpDocs:")):
+            help_menu.addItemWithTitle_action_keyEquivalent_(title, action, "").setTarget_(self.delegate)
+        help_item.setSubmenu_(help_menu)
+        AppKit.NSApp.setHelpMenu_(help_menu)
         AppKit.NSApp.setMainMenu_(menubar)
 
     def refresh(self):
@@ -881,6 +989,22 @@ class Delegate(AppKit.NSObject):
 
     def showHelp_(self, sender):
         self.controller.show_help(sender)
+
+    def showMcpSetup_(self, sender):
+        self.controller.show_mcp_setup()
+
+    def pickHarness_(self, sender):
+        self.controller.pick_harness()
+
+    def copySetup_(self, sender):
+        self.controller.copy_setup()
+
+    def openMcpDocs_(self, sender):
+        self.controller.open_mcp_docs()
+
+    def windowWillClose_(self, notification):
+        # The setup window may still be open; closing the main window quits.
+        AppKit.NSApp.terminate_(None)
 
     def windowDidResignKey_(self, notification):
         self.controller.stop_capture()
