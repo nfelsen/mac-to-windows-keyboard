@@ -222,6 +222,15 @@ class OutboxTests(unittest.TestCase):
         self.assertEqual(self.drain(box), [("keys", 0, ()), ("buttons", 0, 0, 0, 0)])
 
 
+    def test_pending_taps_counts_down(self):
+        box = kc.Outbox()
+        box.text("abc")
+        self.assertEqual(box.pending_taps(), 3)
+        box.take(0)
+        self.assertEqual(box.pending_taps(), 2)
+        box.release_all()
+        self.assertEqual(box.pending_taps(), 0)
+
 class SenderTests(unittest.TestCase):
     def test_packets(self):
         port = FakePort([OK_KEY, OK_MOUSE, OK_MOUSE, OK_MOUSE])

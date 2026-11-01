@@ -238,6 +238,11 @@ class Outbox:
             self.cond.notify()
         return len(taps)
 
+    def pending_taps(self):
+        """Number of queued key taps not yet sent (for typing progress)."""
+        with self.cond:
+            return sum(1 for item in self.items if item[0] == "tap")
+
     def release_all(self):
         """Drop anything pending and release every key and button."""
         with self.cond:

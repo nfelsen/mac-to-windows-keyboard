@@ -15,15 +15,17 @@ Mac → (USB-C adapter) → CH340 end ── cable ── CH9329 end → Windows
 - [uv](https://docs.astral.sh/uv/) for the desktop app and the Copilot MCP server (it installs PyObjC and the MCP SDK automatically)
 - Windows input layout set to **English (United States)**, with Caps Lock off
 
-## Desktop app (keyboard + trackpad)
+## Desktop app: Mac2Win KVM (keyboard + trackpad)
 
-`kvm_app.py` opens a window. Click it, and the Mac keyboard, trackpad, mouse buttons, and scrolling control Windows. Press **Control + Option + Command** together to give control back to the Mac. Switching to another app (for example with Cmd+Tab) or closing the window also releases control.
+<img src="assets/screenshot.png" alt="Mac2Win KVM window: status pills, a click-to-control card, a clipboard button, and grouped Windows special keys" width="720">
+
+`kvm_app.py` opens the **Mac2Win KVM** window. Click it, and the Mac keyboard, trackpad, mouse buttons, and scrolling control Windows. Press **Control + Option + Command** together to give control back to the Mac. Switching to another app (for example with Cmd+Tab) or closing the window also releases control.
 
 ```bash
 uv run kvm_app.py
 ```
 
-The app shows `assets/icon.png` as its Dock icon (`assets/icon.icns` is included for bundling). The first run creates `.venv` and installs the dependencies from `pyproject.toml`. The window shows the serial port, baud rate, whether Windows sees the keyboard, and the Windows Caps Lock state. Useful options:
+The first run creates `.venv` and installs the dependencies from `pyproject.toml`. The window follows the system light or dark appearance and can be resized. Pills in the header show the serial port and baud rate, whether Windows sees the keyboard, and the Windows Caps Lock state (hover for details). While you control Windows, the card gets a glowing accent border; click the **?** button for the key mapping. Useful options:
 
 ```bash
 uv run kvm_app.py --mouse-scale 1.5        # faster pointer
@@ -31,11 +33,24 @@ uv run kvm_app.py --port /dev/cu.usbserial-2130 --baud 57600
 uv run kvm_app.py --smoke-test             # connect, query status, exit; sends no keyboard or mouse reports
 ```
 
-To type the Mac clipboard on Windows, copy text on the Mac, then press **⌘V** in the app window, whether or not you are controlling Windows (or click **Type Clipboard on Windows**, or use Edit → Type Clipboard on Windows). Because ⌘V always types the Mac clipboard, it never sends Ctrl+V to Windows. The whole clipboard is checked first; if it contains anything other than US-layout ASCII (for example curly quotes), nothing is typed and the window names the character. Press **Esc** (or the release shortcut) to stop a long paste; any held keys are released. Line breaks are typed as Enter, so pasting into a terminal runs each line.
+### Install as a Mac app
 
-The buttons under the capture area send Windows special keys and shortcuts without capturing the pointer:
+Run from a terminal, macOS lists the app as "Python 3.12" in Activity Monitor and Force Quit (the window still shows its own name and icon). To get a real **Mac2Win KVM** app for the Dock, Launchpad, Cmd+Tab, Activity Monitor and Force Quit, build the app bundle once:
+
+```bash
+uv run make_app.py                 # creates ~/Applications/Mac2Win KVM.app
+open ~/Applications/"Mac2Win KVM.app"
+```
+
+The bundle runs `kvm_app.py` from this checkout. Each launch runs `uv sync`, so after a `git pull` you only need to quit and reopen it. Rerun `make_app.py` only if you move the checkout. It copies the venv's Python interpreter into the bundle under the app's name, which is what makes macOS show "Mac2Win KVM" instead of "Python". Output goes to `~/Library/Logs/Mac2Win KVM.log`. To remove it, delete the `.app`.
+
+### Clipboard and special keys
+
+To type the Mac clipboard on Windows, copy text on the Mac, then press **⌘V** in the app window, whether or not you are controlling Windows (or click **Type Clipboard on Windows**, or use Edit → Type Clipboard on Windows). A progress bar and a **Stop** button appear while it types. Because ⌘V always types the Mac clipboard, it never sends Ctrl+V to Windows. The whole clipboard is checked first; if it contains anything other than US-layout ASCII (for example curly quotes), nothing is typed and the window names the character. Press **Esc** (or the release shortcut) to stop a long paste; any held keys are released. Line breaks are typed as Enter, so pasting into a terminal runs each line.
+
+The **Special keys** card under the capture area sends Windows special keys and shortcuts without capturing the pointer. They are grouped as System, Windows, Edit, Navigation and Function keys:
 - Ctrl+Alt+Del, Task Manager (Ctrl+Shift+Esc), Alt+Tab, and Alt+F4.
-- Win, Win+R, Win+E, Win+L, Win+D, Win+Tab, and Snip (Win+Shift+S).
+- Win, Win+R, Win+E, Lock (Win+L), Win+D, Win+Tab, and Snip (Win+Shift+S).
 - PrintScreen, Esc, Tab, Enter, Backspace, Insert, Delete, Home, End, Page Up, and Page Down.
 - The arrow keys and F1–F12.
 - Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+Z, Ctrl+A, and Ctrl+S.
@@ -143,5 +158,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app
 ```

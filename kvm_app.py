@@ -13,6 +13,7 @@ import sys
 import threading
 
 import AppKit
+import Foundation
 import objc
 import Quartz
 from PyObjCTools import AppHelper
@@ -32,7 +33,8 @@ for _type in (
     AppKit.NSEventTypeOtherMouseDown, AppKit.NSEventTypeOtherMouseUp, AppKit.NSEventTypeOtherMouseDragged,
 ):
     EVENT_MASK |= 1 << _type
-PANEL_HEIGHT = 160
+APP_NAME = "Mac2Win KVM"
+WINDOW_WIDTH, WINDOW_MIN_WIDTH = 880, 800
 ICON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
 KEY_EVENTS = {AppKit.NSEventTypeKeyDown, AppKit.NSEventTypeKeyUp, AppKit.NSEventTypeFlagsChanged}
 MOUSE_DOWN = {AppKit.NSEventTypeLeftMouseDown, AppKit.NSEventTypeRightMouseDown, AppKit.NSEventTypeOtherMouseDown}
@@ -42,41 +44,183 @@ MOUSE_MOVE = {AppKit.NSEventTypeMouseMoved, AppKit.NSEventTypeLeftMouseDragged,
 
 MAPPING_NOTE = (
     "Paste: ⌘V types the Mac clipboard on Windows (also while controlling; Ctrl+V is not sent). "
-    "US-layout ASCII only; Esc stops.\n"
-    "Control → Ctrl   Option → Alt   ⌘+key → Ctrl+key   ⌘ alone → Start   Delete → Backspace\n"
+    "US-layout ASCII only; Esc stops.\n\n"
+    "Control → Ctrl   Option → Alt   ⌘+key → Ctrl+key   ⌘ alone → Start   Delete → Backspace\n\n"
     "Not forwarded (macOS keeps them): Cmd+Tab, Cmd+Space, Mission Control, "
     "Cmd+Opt+Esc, media keys (hold fn for F1–F12)."
 )
+FOOTER_NOTE = "⌃ Control → Ctrl    ⌥ Option → Alt    ⌘+key → Ctrl+key    ⌘ alone → Start    ⌫ → Backspace"
+LEVEL_COLORS = {"ok": "systemGreenColor", "warn": "systemOrangeColor", "error": "systemRedColor",
+                "idle": "secondaryLabelColor"}
+CARD_RADIUS = 12
+GLOW = 8  # room around the capture card for its glow
+
+
+def color(name):
+    return getattr(AppKit.NSColor, name)()
+
+
+def symbol(name, size=13, weight=AppKit.NSFontWeightRegular):
+    """SF Symbol image, or None (callers then fall back to text)."""
+    image = AppKit.NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, None)
+    if image is None:
+        return None
+    config = AppKit.NSImageSymbolConfiguration.configurationWithPointSize_weight_(size, weight)
+    return image.imageWithSymbolConfiguration_(config)
+
+
+def label(text, size=13, weight=AppKit.NSFontWeightRegular, text_color="labelColor", wrap=False):
+    field = (AppKit.NSTextField.wrappingLabelWithString_(text) if wrap
+             else AppKit.NSTextField.labelWithString_(text))
+    field.setFont_(AppKit.NSFont.systemFontOfSize_weight_(size, weight))
+    field.setTextColor_(color(text_color))
+    return field
+
+
+def stack(views, vertical=False, spacing=8, alignment=None, distribution=None):
+    view = AppKit.NSStackView.stackViewWithViews_(views)
+    view.setOrientation_(AppKit.NSUserInterfaceLayoutOrientationVertical if vertical
+                         else AppKit.NSUserInterfaceLayoutOrientationHorizontal)
+    view.setSpacing_(spacing)
+    if alignment is not None:
+        view.setAlignment_(alignment)
+    if distribution is not None:
+        view.setDistribution_(distribution)
+    return view
+
+
+def pin(view, parent, inset):
+    """Pin ``view`` to ``parent`` with (top, left, bottom, right) insets."""
+    view.setTranslatesAutoresizingMaskIntoConstraints_(False)
+    top, left, bottom, right = inset
+    for constraint in (view.topAnchor().constraintEqualToAnchor_constant_(parent.topAnchor(), top),
+                       view.leadingAnchor().constraintEqualToAnchor_constant_(parent.leadingAnchor(), left),
+                       parent.bottomAnchor().constraintEqualToAnchor_constant_(view.bottomAnchor(), bottom),
+                       parent.trailingAnchor().constraintEqualToAnchor_constant_(view.trailingAnchor(), right)):
+        constraint.setActive_(True)
+
+
+def match_width(view, other):
+    view.widthAnchor().constraintEqualToAnchor_(other.widthAnchor()).setActive_(True)
+
+
+class CardView(AppKit.NSView):
+    """Rounded, lightly filled container that follows light and dark mode."""
+
+    def drawRect_(self, rect):
+        path = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(
+            AppKit.NSInsetRect(self.bounds(), 0.5, 0.5), CARD_RADIUS, CARD_RADIUS)
+        AppKit.NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.6).setFill()
+        path.fill()
+        AppKit.NSColor.separatorColor().setStroke()
+        path.stroke()
+
+
+class ChipView(AppKit.NSView):
+    """Status pill: tinted capsule with a symbol (or dot) and short text."""
+
+    def drawRect_(self, rect):
+        bounds = AppKit.NSInsetRect(self.bounds(), 0.5, 0.5)
+        radius = bounds.size.height / 2
+        path = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, radius, radius)
+        tint = color(LEVEL_COLORS[getattr(self, "level", "idle")])
+        tint.colorWithAlphaComponent_(0.14).setFill()
+        path.fill()
+        tint.colorWithAlphaComponent_(0.35).setStroke()
+        path.stroke()
+
+    def isFlipped(self):
+        return True
+
+
+def make_chip(level, symbol_name, text, tip):
+    chip = ChipView.alloc().initWithFrame_(((0, 0), (10, 10)))
+    chip.level = level
+    tint = color(LEVEL_COLORS[level])
+    image = symbol(symbol_name, 11, AppKit.NSFontWeightSemibold)
+    if image is not None:
+        icon = AppKit.NSImageView.imageViewWithImage_(image)
+        icon.setContentTintColor_(tint)
+    else:
+        icon = label("●", 10, text_color=LEVEL_COLORS[level])
+    text_field = label(text, 11, AppKit.NSFontWeightMedium)
+    inner = stack([icon, text_field], spacing=4)
+    chip.addSubview_(inner)
+    pin(inner, chip, (3, 9, 3, 10))
+    chip.setToolTip_(tip)
+    return chip
 
 
 class CaptureView(AppKit.NSView):
     """Large click target that shows whether Windows is being controlled."""
 
+    def initWithFrame_(self, frame):
+        self = objc.super(CaptureView, self).initWithFrame_(frame)
+        if self is None:
+            return None
+        self.state = "connecting"
+        self.icon = AppKit.NSImageView.alloc().init()
+        self.title = label("", 22, AppKit.NSFontWeightSemibold)
+        self.subtitle = label("", 13, text_color="secondaryLabelColor", wrap=True)
+        for field in (self.title, self.subtitle):
+            field.setAlignment_(AppKit.NSTextAlignmentCenter)
+        self.subtitle.setPreferredMaxLayoutWidth_(520)
+        content = stack([self.icon, self.title, self.subtitle], vertical=True, spacing=8,
+                        alignment=AppKit.NSLayoutAttributeCenterX)
+        content.setCustomSpacing_afterView_(14, self.icon)
+        self.addSubview_(content)
+        content.setTranslatesAutoresizingMaskIntoConstraints_(False)
+        content.centerXAnchor().constraintEqualToAnchor_(self.centerXAnchor()).setActive_(True)
+        content.centerYAnchor().constraintEqualToAnchor_(self.centerYAnchor()).setActive_(True)
+        content.widthAnchor().constraintLessThanOrEqualToAnchor_constant_(self.widthAnchor(), -48).setActive_(True)
+        return self
+
     def drawRect_(self, rect):
-        capturing = getattr(self, "capturing", False)
-        color = (AppKit.NSColor.systemGreenColor() if capturing
-                 else AppKit.NSColor.colorWithCalibratedWhite_alpha_(0.22, 1.0))
-        color.setFill()
-        AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(self.bounds(), 10, 10).fill()
-        title = getattr(self, "title", "")
-        subtitle = getattr(self, "subtitle", "")
-        style = AppKit.NSMutableParagraphStyle.alloc().init()
-        style.setAlignment_(AppKit.NSTextAlignmentCenter)
-        white = AppKit.NSColor.whiteColor()
-        big = {AppKit.NSFontAttributeName: AppKit.NSFont.boldSystemFontOfSize_(22),
-               AppKit.NSForegroundColorAttributeName: white, AppKit.NSParagraphStyleAttributeName: style}
-        small = {AppKit.NSFontAttributeName: AppKit.NSFont.systemFontOfSize_(14),
-                 AppKit.NSForegroundColorAttributeName: white, AppKit.NSParagraphStyleAttributeName: style}
-        bounds = self.bounds()
-        width, middle = bounds.size.width, bounds.size.height / 2
-        AppKit.NSString.stringWithString_(title).drawInRect_withAttributes_(
-            ((0, middle + 2), (width, 32)), big)
-        AppKit.NSString.stringWithString_(subtitle).drawInRect_withAttributes_(
-            ((10, middle - 44), (width - 20, 42)), small)
+        bounds = AppKit.NSInsetRect(self.bounds(), GLOW, GLOW)
+        path = AppKit.NSBezierPath.bezierPathWithRoundedRect_xRadius_yRadius_(bounds, 16, 16)
+        accent = AppKit.NSColor.controlAccentColor()
+        if self.state in ("capturing", "typing"):
+            accent.colorWithAlphaComponent_(0.07).setFill()
+            path.fill()
+            AppKit.NSGraphicsContext.saveGraphicsState()
+            glow = AppKit.NSShadow.alloc().init()
+            glow.setShadowColor_(accent)
+            glow.setShadowBlurRadius_(GLOW)
+            glow.setShadowOffset_((0, 0))
+            glow.set()
+            accent.setStroke()
+            path.setLineWidth_(2.5)
+            path.stroke()
+            path.stroke()
+            AppKit.NSGraphicsContext.restoreGraphicsState()
+            return
+        AppKit.NSColor.controlBackgroundColor().colorWithAlphaComponent_(0.6).setFill()
+        path.fill()
+        if self.state == "ready":
+            accent.colorWithAlphaComponent_(0.7).setStroke()
+            path.setLineWidth_(1.5)
+            path.setLineDash_count_phase_([7, 5], 2, 0)
+        else:
+            AppKit.NSColor.separatorColor().setStroke()
+        path.stroke()
+
+    def resetCursorRects(self):
+        if self.state in ("ready", "offline"):
+            self.addCursorRect_cursor_(self.bounds(), AppKit.NSCursor.pointingHandCursor())
 
     @objc.python_method
-    def set_state(self, capturing, title, subtitle):
-        self.capturing, self.title, self.subtitle = capturing, title, subtitle
+    def set_state(self, state, symbol_name, title, subtitle):
+        self.state = state
+        tint = {"capturing": "controlAccentColor", "typing": "controlAccentColor",
+                "ready": "controlAccentColor", "offline": "systemRedColor"}.get(state, "secondaryLabelColor")
+        image = symbol(symbol_name, 40, AppKit.NSFontWeightLight)
+        self.icon.setImage_(image)
+        self.icon.setHidden_(image is None)
+        self.icon.setContentTintColor_(color(tint))
+        self.title.setStringValue_(title)
+        self.subtitle.setStringValue_(subtitle)
+        self.subtitle.setHidden_(not subtitle)
+        self.window() and self.window().invalidateCursorRectsForView_(self)
         self.setNeedsDisplay_(True)
 
 
@@ -93,9 +237,12 @@ class Controller:
         self.typing_finish = None
         self.bridge = None
         self.panel = kp.Panel()
-        self.sticky_buttons = []
+        self.popover = None
+        self.path, self.rate, self.firmware = None, 0, 0
         self.target = self.leds = 0
+        self.typing_total = 0
         self.cable_text = "Connecting…"
+        self.cable_error = None
         self.keys = kc.KeyboardState()
         self.buttons = 0
         self.move_x = kc.Accumulator(args.mouse_scale)
@@ -109,101 +256,246 @@ class Controller:
 
     def build_window(self):
         style = (AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
-                 | AppKit.NSWindowStyleMaskMiniaturizable)
+                 | AppKit.NSWindowStyleMaskMiniaturizable | AppKit.NSWindowStyleMaskResizable
+                 | AppKit.NSWindowStyleMaskFullSizeContentView)
         self.window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            ((200, 200), (620, 380 + PANEL_HEIGHT)), style, AppKit.NSBackingStoreBuffered, False)
-        self.window.setTitle_("Mac → Windows (CH9329)")
+            ((200, 200), (WINDOW_WIDTH, 700)), style, AppKit.NSBackingStoreBuffered, False)
+        self.window.setTitle_(APP_NAME)
+        self.window.setTitlebarAppearsTransparent_(True)
+        self.window.setTitleVisibility_(AppKit.NSWindowTitleHidden)
         self.window.setDelegate_(self.delegate)
         self.window.setAcceptsMouseMovedEvents_(True)
         self.window.setReleasedWhenClosed_(False)
-        content = self.window.contentView()
+        self.window.setFrameAutosaveName_("Mac2WinMainWindow")
 
-        self.status = AppKit.NSTextField.labelWithString_("")
-        self.status.setFrame_(((20, 320 + PANEL_HEIGHT), (580, 44)))
-        self.status.setFont_(AppKit.NSFont.monospacedSystemFontOfSize_weight_(12, 0))
-        content.addSubview_(self.status)
+        background = AppKit.NSVisualEffectView.alloc().init()
+        background.setMaterial_(AppKit.NSVisualEffectMaterialUnderWindowBackground)
+        background.setBlendingMode_(AppKit.NSVisualEffectBlendingModeBehindWindow)
+        background.setState_(AppKit.NSVisualEffectStateFollowsWindowActiveState)
+        self.window.setContentView_(background)
 
-        self.capture_view = CaptureView.alloc().initWithFrame_(((20, 116 + PANEL_HEIGHT), (580, 196)))
-        content.addSubview_(self.capture_view)
+        self.capture_view = CaptureView.alloc().initWithFrame_(((0, 0), (100, 100)))
+        self.capture_view.setToolTip_("Click to send this Mac's keyboard and trackpad to Windows")
+        self.capture_view.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationVertical)
+        self.capture_view.heightAnchor().constraintGreaterThanOrEqualToConstant_(200).setActive_(True)
 
-        button = AppKit.NSButton.buttonWithTitle_target_action_(
-            "Type Clipboard on Windows", self.delegate, "typeClipboard:")
-        button.setFrame_(((14, 78 + PANEL_HEIGHT), (230, 32)))
-        content.addSubview_(button)
+        rows = [self.build_header(), self.capture_view, self.build_paste_row(), self.build_panel(),
+                self.build_footer()]
+        main = stack(rows, vertical=True, spacing=16, alignment=AppKit.NSLayoutAttributeCenterX)
+        main.setCustomSpacing_afterView_(16 - GLOW, rows[0])
+        main.setCustomSpacing_afterView_(16 - GLOW, self.capture_view)
+        background.addSubview_(main)
+        # The capture card spans GLOW points past the 20 pt margins so its glow has room.
+        pin(main, background, (40, 20 - GLOW, 16, 20 - GLOW))
+        for row in rows:
+            if row is self.capture_view:
+                match_width(row, main)
+            else:
+                row.widthAnchor().constraintEqualToAnchor_constant_(main.widthAnchor(), -2 * GLOW).setActive_(True)
 
-        self.notice = AppKit.NSTextField.wrappingLabelWithString_("")
-        self.notice.setFrame_(((250, 76 + PANEL_HEIGHT), (350, 34)))
-        self.notice.setFont_(AppKit.NSFont.systemFontOfSize_(11))
-        content.addSubview_(self.notice)
-
-        note = AppKit.NSTextField.wrappingLabelWithString_(MAPPING_NOTE)
-        note.setFrame_(((20, 8 + PANEL_HEIGHT), (580, 64)))
-        note.setFont_(AppKit.NSFont.systemFontOfSize_(11))
-        note.setTextColor_(AppKit.NSColor.secondaryLabelColor())
-        content.addSubview_(note)
-        self.build_panel(content)
-
-        self.window.center()
         self.refresh()
+        background.layoutSubtreeIfNeeded()
+        fitting = main.fittingSize()
+        minimum = (WINDOW_MIN_WIDTH, fitting.height + 56)
+        self.window.setContentMinSize_(minimum)
+        self.window.setContentSize_((WINDOW_WIDTH, max(fitting.height + 56, 720)))
+        self.window.center()
 
-    def panel_button(self, content, title, action, tag, frame, tooltip=None):
-        button = AppKit.NSButton.buttonWithTitle_target_action_(title, self.delegate, action)
-        button.setTag_(tag)
-        button.setFrame_(frame)
-        button.setFont_(AppKit.NSFont.systemFontOfSize_(11))
-        button.setBezelStyle_(AppKit.NSBezelStyleSmallSquare)
+    def build_header(self):
+        views = []
+        icon = AppKit.NSImage.alloc().initWithContentsOfFile_(ICON_PATH)
+        if icon is not None:
+            image_view = AppKit.NSImageView.imageViewWithImage_(icon)
+            image_view.setImageScaling_(AppKit.NSImageScaleProportionallyUpOrDown)
+            for anchor in (image_view.widthAnchor(), image_view.heightAnchor()):
+                anchor.constraintEqualToConstant_(44).setActive_(True)
+            views.append(image_view)
+        titles = stack([label(APP_NAME, 17, AppKit.NSFontWeightBold),
+                        label("Mac keyboard & trackpad → Windows over the CH9329 cable", 12,
+                              text_color="secondaryLabelColor")],
+                       vertical=True, spacing=2, alignment=AppKit.NSLayoutAttributeLeading)
+        views.append(titles)
+        spacer = AppKit.NSView.alloc().init()
+        spacer.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        views.append(spacer)
+        self.chips = stack([], spacing=6)
+        views.append(self.chips)
+        header = stack(views, spacing=12, alignment=AppKit.NSLayoutAttributeCenterY)
+        titles.setContentCompressionResistancePriority_forOrientation_(
+            250, AppKit.NSLayoutConstraintOrientationHorizontal)
+        return header
+
+    def control_button(self, title, action, symbol_name=None, tooltip=None, target=None):
+        button = AppKit.NSButton.buttonWithTitle_target_action_(title, target or self.delegate, action)
+        image = symbol(symbol_name) if symbol_name else None
+        if image is not None:
+            button.setImage_(image)
+            button.setImagePosition_(AppKit.NSImageLeading)
         # Never take keyboard focus, so Space/Return in the window don't click it.
         button.setRefusesFirstResponder_(True)
         if tooltip:
             button.setToolTip_(tooltip)
-        content.addSubview_(button)
         return button
 
-    def build_panel(self, content):
-        """Windows special-key buttons below the capture area; clicking them never captures."""
-        left, width, height, gap = 20, 580, 24, 3
-        y = 8
-        label = AppKit.NSTextField.labelWithString_("Hold for next key:")
-        label.setFrame_(((left, y + 4), (110, 16)))
-        label.setFont_(AppKit.NSFont.systemFontOfSize_(11))
-        content.addSubview_(label)
-        for index, (title, _) in enumerate(kp.STICKY):
-            button = self.panel_button(content, title, "stickyKey:", index,
-                                       ((left + 114 + index * 64, y), (60, height)),
-                                       f"Hold {title} for the next button")
-            button.setButtonType_(AppKit.NSButtonTypePushOnPushOff)
-            self.sticky_buttons.append(button)
-        index = len(kp.BUTTONS)
-        for row in reversed(kp.ROWS):
-            y += height + gap
-            index -= len(row)
-            weights = [max(len(title), 4) + 3 for title, _ in row]
-            unit = (width - gap * (len(row) - 1)) / sum(weights)
-            x = left
-            for column, (title, combo) in enumerate(row):
-                size = weights[column] * unit
-                self.panel_button(content, title, "panelKey:", index + column,
-                                  ((x, y), (size, height)), combo)
-                x += size + gap
+    def build_paste_row(self):
+        self.paste_button = self.control_button(
+            " Type Clipboard on Windows", "typeClipboard:", "doc.on.clipboard",
+            "Types the Mac clipboard text on Windows (⌘V). US-layout ASCII only.")
+        self.paste_button.setControlSize_(AppKit.NSControlSizeLarge)
+        self.paste_button.setFont_(AppKit.NSFont.systemFontOfSize_weight_(13, AppKit.NSFontWeightSemibold))
+        # Accent-filled while the window is active (inactive windows draw it grey).
+        self.paste_button.setBezelColor_(AppKit.NSColor.controlAccentColor())
+        if hasattr(self.paste_button, "setTintProminence_"):  # macOS 26+
+            self.paste_button.setTintProminence_(AppKit.NSTintProminencePrimary)
+        self.progress = AppKit.NSProgressIndicator.alloc().init()
+        self.progress.setStyle_(AppKit.NSProgressIndicatorStyleBar)
+        self.progress.setIndeterminate_(False)
+        self.progress.setMinValue_(0)
+        self.progress.setMaxValue_(1)
+        self.progress.widthAnchor().constraintEqualToConstant_(160).setActive_(True)
+        self.stop_button = self.control_button("Stop", "stopTyping:", "stop.circle", "Stop typing (Esc)")
+        self.notice = label("⌘V also works, even while controlling Windows.", 12,
+                            text_color="secondaryLabelColor")
+        self.notice.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
+        self.notice.setContentCompressionResistancePriority_forOrientation_(
+            250, AppKit.NSLayoutConstraintOrientationHorizontal)
+        self.notice.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        row = stack([self.paste_button, self.progress, self.stop_button, self.notice], spacing=12,
+                    alignment=AppKit.NSLayoutAttributeCenterY)
+        return row
+
+    def panel_button(self, title, index):
+        _, combo = kp.BUTTONS[index]
+        button = self.control_button(title, "panelKey:", kp.SYMBOLS.get(title), kp.tooltip(title, combo))
+        button.setTag_(index)
+        button.setFont_(AppKit.NSFont.systemFontOfSize_(12))
+        if title in "←→↑↓" and button.image() is not None:
+            button.setImagePosition_(AppKit.NSImageOnly)
+        button.setContentCompressionResistancePriority_forOrientation_(
+            250, AppKit.NSLayoutConstraintOrientationHorizontal)
+        return button
+
+    def build_section(self, name, rows, start):
+        header = label(name.upper(), 10, AppKit.NSFontWeightSemibold, "secondaryLabelColor")
+        views = [header]
+        index = start
+        for row in rows:
+            buttons = []
+            for title, _ in row:
+                buttons.append(self.panel_button(title, index))
+                index += 1
+            views.append(stack(buttons, spacing=6, distribution=AppKit.NSStackViewDistributionFillEqually))
+        section = stack(views, vertical=True, spacing=6, alignment=AppKit.NSLayoutAttributeLeading)
+        for row in views[1:]:
+            match_width(row, section)
+        return section, index
+
+    def build_panel(self):
+        """Windows special-key buttons; clicking them never captures."""
+        title = label("Special keys", 13, AppKit.NSFontWeightSemibold)
+        hint = label("Sent to Windows on click", 11, text_color="secondaryLabelColor")
+        spacer = AppKit.NSView.alloc().init()
+        spacer.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        hold = label("Hold for next key:", 11, text_color="secondaryLabelColor")
+        self.sticky_control = AppKit.NSSegmentedControl.alloc().init()
+        self.sticky_control.setSegmentCount_(len(kp.STICKY))
+        self.sticky_control.setTrackingMode_(AppKit.NSSegmentSwitchTrackingSelectAny)
+        for index, ((name, _), symbol_name) in enumerate(zip(kp.STICKY, kp.STICKY_SYMBOLS)):
+            self.sticky_control.setLabel_forSegment_(name, index)
+            image = symbol(symbol_name, 11)
+            if image is not None:
+                self.sticky_control.setImage_forSegment_(image, index)
+                self.sticky_control.setImageScaling_forSegment_(AppKit.NSImageScaleNone, index)
+            self.sticky_control.setToolTip_forSegment_(f"Hold {name} for the next button", index)
+        self.sticky_control.setTarget_(self.delegate)
+        self.sticky_control.setAction_("stickyKey:")
+        self.sticky_control.setRefusesFirstResponder_(True)
+        header = stack([title, hint, spacer, hold, self.sticky_control], spacing=8,
+                       alignment=AppKit.NSLayoutAttributeCenterY)
+
+        sections = dict(kp.SECTIONS)
+        built, index = {}, 0
+        for name, rows in kp.SECTIONS:
+            built[name], index = self.build_section(name, rows, index)
+        bands = []
+        for names in kp.BANDS:
+            band = stack([built[name] for name in names], spacing=20,
+                         alignment=AppKit.NSLayoutAttributeTop,
+                         distribution=AppKit.NSStackViewDistributionFill)
+            for name in names:
+                built[name].setContentHuggingPriority_forOrientation_(
+                    1, AppKit.NSLayoutConstraintOrientationHorizontal)
+            # Size sections by column count so every key in a band is the same width.
+            columns = [len(sections[name][0]) for name in names]
+            for name, count in zip(names[1:], columns[1:]):
+                built[name].widthAnchor().constraintEqualToAnchor_multiplier_(
+                    built[names[0]].widthAnchor(), count / columns[0]).setActive_(True)
+            bands.append(band)
+        content = stack([header] + bands, vertical=True, spacing=14)
+        for view in [header] + bands:
+            match_width(view, content)
+        card = CardView.alloc().initWithFrame_(((0, 0), (100, 100)))
+        card.addSubview_(content)
+        pin(content, card, (14, 16, 16, 16))
+        card.setContentHuggingPriority_forOrientation_(750, AppKit.NSLayoutConstraintOrientationVertical)
+        return card
+
+    def build_footer(self):
+        note = label(FOOTER_NOTE, 11, text_color="tertiaryLabelColor")
+        note.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
+        note.setContentCompressionResistancePriority_forOrientation_(
+            250, AppKit.NSLayoutConstraintOrientationHorizontal)
+        note.setToolTip_(MAPPING_NOTE)
+        spacer = AppKit.NSView.alloc().init()
+        spacer.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        help_button = AppKit.NSButton.alloc().init()
+        help_button.setBezelStyle_(AppKit.NSBezelStyleHelpButton)
+        help_button.setTitle_("")
+        help_button.setTarget_(self.delegate)
+        help_button.setAction_("showHelp:")
+        help_button.setRefusesFirstResponder_(True)
+        help_button.setToolTip_("Key mapping and limitations")
+        return stack([note, spacer, help_button], spacing=8, alignment=AppKit.NSLayoutAttributeCenterY)
+
+    def show_help(self, sender):
+        popover = AppKit.NSPopover.alloc().init()
+        popover.setBehavior_(AppKit.NSPopoverBehaviorTransient)
+        text = label(MAPPING_NOTE, 12, wrap=True)
+        text.setPreferredMaxLayoutWidth_(360)
+        holder = AppKit.NSView.alloc().init()
+        holder.addSubview_(text)
+        pin(text, holder, (14, 16, 14, 16))
+        controller = AppKit.NSViewController.alloc().init()
+        controller.setView_(holder)
+        popover.setContentViewController_(controller)
+        popover.showRelativeToRect_ofView_preferredEdge_(sender.bounds(), sender, AppKit.NSRectEdgeMaxY)
+        self.popover = popover
 
     def panel_key(self, index):
-        taps, label = self.panel.press(index)
-        for button in self.sticky_buttons:
-            button.setState_(AppKit.NSControlStateValueOff)
-        error = self.start_taps(taps, f"keys {label}", check_caps=False)
+        taps, label_text = self.panel.press(index)
+        self.sync_sticky()
+        error = self.start_taps(taps, f"keys {label_text}", check_caps=False)
         if error:
-            self.set_notice(error)
+            self.set_notice(error, "error")
 
-    def toggle_sticky(self, index, button):
-        on = self.panel.toggle(index)
-        button.setState_(AppKit.NSControlStateValueOn if on else AppKit.NSControlStateValueOff)
+    def toggle_sticky(self, control):
+        for index, (_, bit) in enumerate(kp.STICKY):
+            if control.isSelectedForSegment_(index) != bool(self.panel.sticky & bit):
+                self.panel.toggle(index)
+        self.sync_sticky()
+
+    def sync_sticky(self):
+        for index, (_, bit) in enumerate(kp.STICKY):
+            self.sticky_control.setSelected_forSegment_(bool(self.panel.sticky & bit), index)
 
     def build_menu(self):
         menubar = AppKit.NSMenu.alloc().init()
         item = AppKit.NSMenuItem.alloc().init()
         menubar.addItem_(item)
         menu = AppKit.NSMenu.alloc().init()
-        menu.addItemWithTitle_action_keyEquivalent_("Quit", "terminate:", "q")
+        menu.addItemWithTitle_action_keyEquivalent_(f"Hide {APP_NAME}", "hide:", "h")
+        menu.addItem_(AppKit.NSMenuItem.separatorItem())
+        menu.addItemWithTitle_action_keyEquivalent_(f"Quit {APP_NAME}", "terminate:", "q")
         item.setSubmenu_(menu)
         edit_item = AppKit.NSMenuItem.alloc().init()
         menubar.addItem_(edit_item)
@@ -214,22 +506,17 @@ class Controller:
         AppKit.NSApp.setMainMenu_(menubar)
 
     def refresh(self):
-        self.status.setStringValue_(self.cable_text)
-        if self.typing:
-            title = f"Typing {self.typing_label} on Windows…"
-            subtitle = "Press Esc to stop. Other input is paused until it finishes."
-        elif self.capturing:
-            title = "Controlling Windows"
-            subtitle = (f"Press {kc.RELEASE_SHORTCUT} together to release.\n"
-                        f"{kc.PASTE_SHORTCUT} types the Mac clipboard.")
-        elif self.keyboard:
-            title = "Click here to control Windows"
-            subtitle = f"Release with {kc.RELEASE_SHORTCUT}.  ⌘V types the Mac clipboard."
-        elif self.connecting:
-            title, subtitle = "Connecting to cable…", ""
-        else:
-            title, subtitle = "Cable not connected", "Click to retry."
-        self.capture_view.set_state(self.capturing, title, subtitle)
+        for chip in list(self.chips.arrangedSubviews()):
+            self.chips.removeView_(chip)
+        for chip in kp.status_chips(self.connecting, self.cable_error, self.path if self.keyboard else None,
+                                    self.rate, self.firmware, self.target, self.leds):
+            self.chips.addArrangedSubview_(make_chip(*chip))
+        self.capture_view.set_state(*kp.capture_message(
+            bool(self.keyboard), self.connecting, self.capturing, self.typing, self.typing_label,
+            self.cable_error, kc.RELEASE_SHORTCUT, kc.PASTE_SHORTCUT))
+        self.paste_button.setEnabled_(bool(self.keyboard) and not self.typing)
+        self.progress.setHidden_(not self.typing)
+        self.stop_button.setHidden_(not self.typing)
 
     # ----- cable -----
 
@@ -237,6 +524,7 @@ class Controller:
         if self.connecting or self.keyboard:
             return
         self.connecting = True
+        self.cable_error = None
         self.cable_text = "Connecting…"
         self.refresh()
         threading.Thread(target=self.connect_worker, daemon=True).start()
@@ -295,6 +583,7 @@ class Controller:
 
     def connect_failed(self, exc):
         self.connecting = False
+        self.cable_error = str(exc)
         self.cable_text = f"Cable error: {exc}"
         self.refresh()
         if self.args.smoke_test:
@@ -305,6 +594,7 @@ class Controller:
         self.finish_typing(f"Cable error: {exc}")
         self.stop_capture(send=False)
         self.disconnect()
+        self.cable_error = str(exc)
         self.cable_text = f"Cable error: {exc}"
         self.refresh()
 
@@ -319,20 +609,22 @@ class Controller:
 
     # ----- clipboard -----
 
-    def set_notice(self, text):
+    def set_notice(self, text, level="info"):
         self.notice.setStringValue_(text)
+        self.notice.setToolTip_(text)
+        self.notice.setTextColor_(color("systemRedColor" if level == "error" else "secondaryLabelColor"))
 
     def paste_clipboard(self):
         text = AppKit.NSPasteboard.generalPasteboard().stringForType_(AppKit.NSPasteboardTypeString)
         if not text:
-            return self.set_notice("The Mac clipboard has no text.")
+            return self.set_notice("The Mac clipboard has no text.", "error")
         try:
             taps = wk.encode_text(text)
         except ValueError as exc:
-            return self.set_notice(str(exc))
+            return self.set_notice(str(exc), "error")
         error = self.start_taps(taps, "the clipboard")
         if error:
-            self.set_notice(error)
+            self.set_notice(error, "error")
 
     def start_taps(self, taps, label, on_finish=None, check_caps=True):
         """Queue validated taps; returns an error string instead if refused.
@@ -357,16 +649,28 @@ class Controller:
         self.typing = True
         self.typing_label = label
         self.typing_finish = on_finish
+        self.typing_total = count
+        self.progress.setDoubleValue_(0)
         self.set_notice(f"Typing {label} ({count} keys)… press Esc to stop.")
         self.refresh()
+        AppHelper.callLater(0.1, self.update_progress)
         return None
+
+    def update_progress(self):
+        if not self.typing or not self.outbox:
+            return
+        if self.typing_total:
+            done = self.typing_total - self.outbox.pending_taps()
+            self.progress.setDoubleValue_(done / self.typing_total)
+        AppHelper.callLater(0.1, self.update_progress)
 
     def finish_typing(self, error):
         if not self.typing:
             return
         self.typing = False
         callback, self.typing_finish = self.typing_finish, None
-        self.set_notice(error or f"Typed {self.typing_label} on Windows.")
+        self.set_notice(error or f"Typed {self.typing_label} on Windows.",
+                        "error" if error and not error.startswith("Stopped") else "info")
         self.refresh()
         if callback:
             callback(error)
@@ -544,9 +848,9 @@ class Controller:
                 bridge.start()
                 self.bridge = bridge
             else:
-                self.set_notice("Another kvm_app.py is already serving Copilot requests.")
+                self.set_notice("Another kvm_app.py is already serving Copilot requests.", "error")
         except (OSError, kb.BridgeError) as exc:
-            self.set_notice(f"Copilot bridge unavailable: {exc}")
+            self.set_notice(f"Copilot bridge unavailable: {exc}", "error")
 
     def shutdown(self):
         if self.bridge:
@@ -570,7 +874,13 @@ class Delegate(AppKit.NSObject):
         self.controller.panel_key(sender.tag())
 
     def stickyKey_(self, sender):
-        self.controller.toggle_sticky(sender.tag(), sender)
+        self.controller.toggle_sticky(sender)
+
+    def stopTyping_(self, sender):
+        self.controller.cancel_typing()
+
+    def showHelp_(self, sender):
+        self.controller.show_help(sender)
 
     def windowDidResignKey_(self, notification):
         self.controller.stop_capture()
@@ -587,6 +897,15 @@ class Delegate(AppKit.NSObject):
 
 def refuse_report(*args, **kwargs):
     raise wk.CableError("Smoke test must not send keyboard or mouse reports.")
+
+
+def set_app_name():
+    """Show APP_NAME instead of "Python" in the menu bar when run outside the .app bundle."""
+    bundle = Foundation.NSBundle.mainBundle()
+    for info in (bundle.localizedInfoDictionary(), bundle.infoDictionary()):
+        if info is not None and info.get("CFBundleName") != APP_NAME:
+            info["CFBundleName"] = APP_NAME
+            info["CFBundleDisplayName"] = APP_NAME
 
 
 def parse_args(argv=None):
@@ -607,6 +926,7 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    set_app_name()
     app = AppKit.NSApplication.sharedApplication()
     app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
     controller = Controller(args)

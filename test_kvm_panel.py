@@ -52,5 +52,66 @@ class PanelTests(unittest.TestCase):
         self.assertEqual(panel.press(index_of("F4")), ([(wk.ALT, 0x3D)], "alt+f4"))
 
 
+
+class LayoutTests(unittest.TestCase):
+    def test_sections_and_bands(self):
+        names = [name for name, _ in kp.SECTIONS]
+        self.assertEqual(sorted(names), sorted(n for band in kp.BANDS for n in band))
+        for name, rows in kp.SECTIONS:
+            self.assertEqual(len({len(row) for row in rows}), 1, name)
+        sections = dict(kp.SECTIONS)
+        for band in kp.BANDS:
+            self.assertEqual(len({len(sections[n]) for n in band}), 1, band)
+        titles = [title for title, _ in kp.BUTTONS]
+        self.assertEqual(len(titles), len(set(titles)))
+        self.assertEqual(len(kp.STICKY_SYMBOLS), len(kp.STICKY))
+        self.assertTrue(set(kp.SYMBOLS) <= set(titles))
+
+    def test_tooltip(self):
+        self.assertEqual(kp.tooltip("Lock", "win+l"), "Lock: Win+L")
+        self.assertEqual(kp.tooltip("Win+R", "win+r"), "Win+R")
+        self.assertEqual(kp.tooltip("F4", "f4"), "F4")
+
+
+class StatusTests(unittest.TestCase):
+    def chips(self, **kw):
+        args = dict(connecting=False, error="", path="/dev/cu.usbserial-2130",
+                    rate=57600, firmware=0x30, target=1, leds=0)
+        args.update(kw)
+        return kp.status_chips(**args)
+
+    def test_connected(self):
+        chips = self.chips()
+        self.assertEqual([c[0] for c in chips], ["ok", "ok", "idle"])
+        self.assertEqual(chips[0][2], "usbserial-2130 · 57600")
+        self.assertIn("0x30", chips[0][3])
+
+    def test_warnings(self):
+        chips = self.chips(target=0, leds=2)
+        self.assertEqual([c[0] for c in chips], ["ok", "warn", "warn"])
+        self.assertEqual(chips[2][2], "Caps Lock on")
+
+    def test_error_and_connecting(self):
+        self.assertEqual(self.chips(error="no cable")[0][:3],
+                         ("error", "cable.connector.slash", "Cable not connected"))
+        self.assertEqual(self.chips(connecting=True)[0][0], "idle")
+        self.assertEqual(self.chips(path="")[0][0], "idle")
+
+    def test_capture_message_states(self):
+        def state(**kw):
+            args = dict(connected=True, connecting=False, capturing=False, typing=False,
+                        typing_label="the clipboard", error="",
+                        release_shortcut="Ctrl+Opt+Cmd", paste_shortcut="⌘V")
+            args.update(kw)
+            return kp.capture_message(**args)
+        self.assertEqual(state()[0], "ready")
+        self.assertIn("Ctrl+Opt+Cmd", state(capturing=True)[3])
+        self.assertIn("⌘V", state(capturing=True)[3])
+        self.assertEqual(state(capturing=True, typing=True)[2], "Typing the clipboard on Windows…")
+        self.assertEqual(state(connected=False, connecting=True)[0], "connecting")
+        offline = state(connected=False, error="busy")
+        self.assertEqual(offline[0], "offline")
+        self.assertIn("busy", offline[3])
+
 if __name__ == "__main__":
     unittest.main()
