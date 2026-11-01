@@ -40,7 +40,8 @@ HID_CAPS_LOCK = 0x39
 
 # NSEvent device-dependent modifier bits (NX_DEVICE*KEYMASK), which
 # distinguish left/right, mapped to CH9329/HID modifier bits.
-# Control -> Ctrl, Option -> Alt, Command -> Win.
+# Control -> Ctrl, Option -> Alt. Command is tracked in the Win bits here;
+# KeyboardState sends Command+key as Ctrl+key and a lone Command tap as Win.
 LCTRL, LSHIFT, LALT, LWIN, RCTRL, RSHIFT, RALT, RWIN = (1 << n for n in range(8))
 DEVICE_FLAG_TO_HID = (
     (0x0001, LCTRL), (0x2000, RCTRL),
@@ -57,7 +58,7 @@ MAC_V, MAC_ESCAPE = 0x09, 0x35
 
 
 def is_paste_shortcut(key_code, flags):
-    """Cmd+V (without Control/Option) types the Mac clipboard; Win+V is never sent."""
+    """Cmd+V (without Control/Option) types the Mac clipboard; Ctrl+V is never sent."""
     return (key_code == MAC_V and flags & NS_COMMAND
             and not flags & (NS_CONTROL | NS_OPTION))
 
@@ -85,10 +86,10 @@ WIN_BITS = LWIN | RWIN
 class KeyboardState:
     """Tracks held keys and modifiers; methods return the reports to send (a list).
 
-    The Windows key is lazy: holding Command sends nothing until another key is
-    pressed, so Mac shortcuts the app handles itself (such as ⌘V) never reach
-    Windows as a lone Win press that opens Start. Tapping Command by itself
-    sends a Win tap on release, so the Start menu still works.
+    Command works Mac-style and is lazy: holding it sends nothing until another
+    key is pressed, then it is sent as Ctrl (⌘C -> Ctrl+C, ⌘Z -> Ctrl+Z), so Mac
+    shortcuts the app handles itself (such as ⌘V) never reach Windows. Tapping
+    Command by itself sends a Win tap on release, so the Start menu still works.
     """
 
     def __init__(self):
@@ -98,14 +99,20 @@ class KeyboardState:
         self.modifier = 0      # modifier byte Windows has been sent
         self.held = 0          # modifier keys physically held on the Mac
         self.keys = []
-        self.win_sent = False  # held Win has been sent to Windows
-        self.win_used = False  # held Win was part of a chord, so no tap on release
+        self.win_sent = False  # held Command has been sent to Windows (as Ctrl)
+        self.win_used = False  # held Command was part of a chord, so no Win tap on release
 
     def report(self):
         return self.modifier, tuple(self.keys)
 
     def _target(self):
-        return self.held if self.win_sent else self.held & ~WIN_BITS
+        target = self.held & ~WIN_BITS
+        if self.win_sent:
+            if self.held & LWIN:
+                target |= LCTRL
+            if self.held & RWIN:
+                target |= RCTRL
+        return target
 
     def _sync(self):
         if self._target() == self.modifier:

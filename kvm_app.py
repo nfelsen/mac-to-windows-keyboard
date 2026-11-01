@@ -41,9 +41,9 @@ MOUSE_MOVE = {AppKit.NSEventTypeMouseMoved, AppKit.NSEventTypeLeftMouseDragged,
               AppKit.NSEventTypeRightMouseDragged, AppKit.NSEventTypeOtherMouseDragged}
 
 MAPPING_NOTE = (
-    "Paste: ⌘V types the Mac clipboard on Windows (also while controlling; Win+V is not sent). "
+    "Paste: ⌘V types the Mac clipboard on Windows (also while controlling; Ctrl+V is not sent). "
     "US-layout ASCII only; Esc stops.\n"
-    "Control → Ctrl   Option → Alt   Command → Windows key   Delete → Backspace\n"
+    "Control → Ctrl   Option → Alt   ⌘+key → Ctrl+key   ⌘ alone → Start   Delete → Backspace\n"
     "Not forwarded (macOS keeps them): Cmd+Tab, Cmd+Space, Mission Control, "
     "Cmd+Opt+Esc, media keys (hold fn for F1–F12)."
 )

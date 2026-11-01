@@ -80,11 +80,17 @@ class LazyWinTests(unittest.TestCase):
         self.assertEqual(state.set_modifier(kc.LWIN), [])
         self.assertEqual(state.set_modifier(0), [(kc.LWIN, ()), (0, ())])
 
-    def test_command_shortcut_sends_win_with_key(self):
+    def test_command_shortcut_sends_ctrl_with_key(self):
         state = kc.KeyboardState()
         reports = state.set_modifier(kc.RWIN)
         reports += state.press(self.E) + state.release(self.E) + state.set_modifier(0)
-        self.assertEqual(reports, [(kc.RWIN, ()), (kc.RWIN, (self.E,)), (kc.RWIN, ()), (0, ())])
+        self.assertEqual(reports, [(kc.RCTRL, ()), (kc.RCTRL, (self.E,)), (kc.RCTRL, ()), (0, ())])
+
+    def test_command_shift_key_sends_ctrl_shift(self):
+        state = kc.KeyboardState()
+        reports = state.set_modifier(kc.LWIN | kc.LSHIFT) + state.press(self.E)
+        self.assertEqual(reports[-1], (kc.LCTRL | kc.LSHIFT, (self.E,)))
+        self.assertFalse(any(modifier & kc.WIN_BITS for modifier, _ in reports))
 
     def test_chords_with_other_modifiers_do_not_tap_win(self):
         state = kc.KeyboardState()
@@ -107,7 +113,7 @@ class LazyWinTests(unittest.TestCase):
         state.set_modifier(kc.LWIN)
         state.clear()
         self.assertEqual(state.set_modifier(kc.LWIN) + state.press(self.E),
-                         [(kc.LWIN, ()), (kc.LWIN, (self.E,))])
+                         [(kc.LCTRL, ()), (kc.LCTRL, (self.E,))])
         state.clear()
         self.assertEqual(state.set_modifier(0), [])  # Command released after typing
 
