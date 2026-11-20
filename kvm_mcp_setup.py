@@ -277,7 +277,10 @@ def markdown(uv: str = PLACEHOLDER_UV, repo: str = PLACEHOLDER_REPO) -> str:
         "call. An assistant can also save a link itself with `set_teams_meeting_link` (for example "
         "after creating a one-time meeting through Microsoft Graph with `POST /me/events`, "
         "`isOnlineMeeting: true`, `onlineMeetingProvider: \"teamsForBusiness\"`, "
-        "`showAs: \"free\"`, `isReminderOn: false` and no attendees); only Teams links are accepted. "
+        "`showAs: \"free\"`, `isReminderOn: false` and no attendees, then saving the short "
+        "`https://teams.microsoft.com/meet/<id>?p=...` link from the event body, because "
+        "`onlineMeeting.joinUrl` is usually a long `/l/meetup-join/` link over 259 characters); "
+        "only Teams links are accepted. "
         "Joining and picking the screen may still need a click on Windows. See the README's "
         "Teams section for details and for editing the steps.",
         "",

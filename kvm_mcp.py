@@ -74,7 +74,9 @@ def set_teams_meeting_link(url: str) -> str:
     Use a meeting the user owns, for example a one-time meeting you just created for them
     through Microsoft Graph: POST /me/events with isOnlineMeeting true, onlineMeetingProvider
     "teamsForBusiness", showAs "free" (so their calendar stays free), isReminderOn false, and
-    no attendees; then pass its onlineMeeting.joinUrl. Only https://teams.microsoft.com/... or msteams: links of at most 259
+    no attendees. Pass the short https://teams.microsoft.com/meet/<id>?p=... link found in the
+    event body; onlineMeeting.joinUrl is usually a long /l/meetup-join/ link over 259
+    characters, so use it only if it fits. Only https://teams.microsoft.com/... or msteams: links of at most 259
     characters are accepted (the Windows Run box limit); prefer the short
     https://teams.microsoft.com/meet/... join link over long /l/meetup-join/ links.
     """
