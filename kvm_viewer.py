@@ -153,6 +153,10 @@ JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: 
   errors: window.__m2wErrors || []})
 """
 
+# When the join flow stalls, the start of the page text says which screen Teams is stuck on.
+STUCK_INFO_SCRIPT = PAGE_INFO_SCRIPT.replace(
+    "JSON.stringify({", "JSON.stringify({start: (document.body && document.body.innerText || '').slice(0, 160), ", 1)
+
 STALL_STATES = ("loading", "launcher")
 STALL_SECONDS = 30
 MAX_RELOADS = 3

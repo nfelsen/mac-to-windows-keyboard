@@ -151,11 +151,11 @@ class Viewer:
             self.status.setStringValue_(message)
         self.on_change(message, level)
 
-    def log_page(self, state):
+    def log_page(self, state, script=kv.PAGE_INFO_SCRIPT):
         if self.web is None:
             return log(state)
         self.web.evaluateJavaScript_completionHandler_(
-            kv.PAGE_INFO_SCRIPT, lambda info, error: log(f"{state}: {info or error}"))
+            script, lambda info, error: log(f"{state}: {info or error}"))
 
     def in_meeting(self):
         return self.state in ("in-meeting", "live")
@@ -183,7 +183,7 @@ class Viewer:
             return self.stop("ended")
         self.set_state(state)
         if self.stall.update(state, time.monotonic()):
-            self.log_page(f"stuck {state} for {self.stall.limit}s")
+            self.log_page(f"stuck {state} for {self.stall.limit}s", kv.STUCK_INFO_SCRIPT)
             self.reload(f"attempt {self.stall.reloads} of {self.stall.max_reloads}")
         if self.in_meeting() and self.preview_visible():
             self.capture(self.show_frame)
