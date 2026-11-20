@@ -79,11 +79,9 @@ def set_teams_meeting_link(url: str) -> str:
     "teamsForBusiness", showAs "free" (so their calendar stays free), isReminderOn false, and
     no attendees. Pass the short https://teams.microsoft.com/meet/<id>?p=... link found in the
     event body; onlineMeeting.joinUrl is usually a long /l/meetup-join/ link over 259
-    characters, so use it only if it fits. If the user agreed to let everyone skip the lobby
-    (so windows_screenshot's viewer joins without an Admit click; anyone with the link can then
-    watch Windows), find the meeting with GET /me/onlineMeetings?$filter=JoinWebUrl eq
-    '<onlineMeeting.joinUrl>' and PATCH /me/onlineMeetings/{id} with
-    {"lobbyBypassSettings": {"scope": "everyone"}}. Only https://teams.microsoft.com/... or msteams:
+    characters, so use it only if it fits. Don't change the meeting's lobby settings: with
+    lobbyBypassSettings "everyone" the windows_screenshot viewer still waited in the lobby and
+    then received no video. The user admits "Mac2Win viewer" once instead. Only https://teams.microsoft.com/... or msteams:
     links are accepted, at most 259 characters once typed as msteams:// (the Windows Run box
     limit). Windows opens the link in its installed, signed-in Teams app, not a browser.
     """

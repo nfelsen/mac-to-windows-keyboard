@@ -289,11 +289,9 @@ def markdown(uv: str = PLACEHOLDER_UV, repo: str = PLACEHOLDER_REPO) -> str:
         "Without Computer Use, the assistant can call `windows_screenshot`: Mac2Win KVM joins the "
         "saved meeting in a hidden, receive-only web view (guest **Mac2Win viewer**, no mic, camera "
         "or audio) and returns the Windows share as an image. Admit **Mac2Win viewer** from the "
-        "lobby in Teams, or let everyone bypass the lobby: after creating the event, find the meeting "
-        "with `GET /me/onlineMeetings?$filter=JoinWebUrl eq '<joinUrl>'` and `PATCH "
-        "/me/onlineMeetings/{id}` with `{\"lobbyBypassSettings\": {\"scope\": \"everyone\"}}`. "
-        "With the bypass, anyone holding the link can watch Windows, so use a fresh one-time meeting "
-        "and keep its link private. See the README's \"Step by step: let an assistant see Windows\" "
+        "lobby in Teams once per meeting. Don't set the meeting's lobby bypass "
+        "(`lobbyBypassSettings` \"everyone\"): in testing the viewer still waited in the lobby and "
+        "then got no video, and anyone holding the link could watch Windows. See the README's \"Step by step: let an assistant see Windows\" "
         "for the full flow and troubleshooting.",
         "",
     ]
