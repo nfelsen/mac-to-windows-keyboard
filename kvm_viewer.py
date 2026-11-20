@@ -147,7 +147,7 @@ ERROR_LOG_SCRIPT = r"""
 PAGE_INFO_SCRIPT = r"""
 JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: document.readyState,
   text: (document.body && document.body.innerText || '').length,
-  visibility: document.visibilityState, media: navigator.mediaDevices && navigator.mediaDevices.__m2wStub ? 'stub' : 'webkit', videos: document.querySelectorAll('video').length,
+  visibility: document.visibilityState, media: navigator.mediaDevices && navigator.mediaDevices.__m2wStub ? 'stub' : 'webkit', rtc: typeof RTCPeerConnection, videos: document.querySelectorAll('video').length,
   scripts: document.scripts.length, resources: performance.getEntriesByType('resource').length,
   errors: window.__m2wErrors || []})
 """

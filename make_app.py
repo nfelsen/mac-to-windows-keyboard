@@ -35,6 +35,11 @@ def info_plist(name=APP_NAME, bundle_id=BUNDLE_ID, version="1.0"):
         "CFBundleVersion": version,
         "LSMinimumSystemVersion": "11.0",
         "NSHighResolutionCapable": True,
+        # WebKit only offers navigator.mediaDevices (and Teams only receives the
+        # screen share) in apps that declare these. The viewer never captures:
+        # every mic/camera request is refused before macOS could ask.
+        "NSCameraUsageDescription": "Mac2Win KVM never uses the camera; its Teams viewer only receives the Windows screen.",
+        "NSMicrophoneUsageDescription": "Mac2Win KVM never uses the microphone; its Teams viewer only receives the Windows screen.",
         "NSHumanReadableCopyright": "github.com/nfelsen/mac-to-windows-keyboard",
     }
 

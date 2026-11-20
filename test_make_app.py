@@ -14,6 +14,9 @@ class MakeAppTests(unittest.TestCase):
         self.assertEqual(info["CFBundleExecutable"], "launcher")
         self.assertEqual(info["CFBundleIconFile"], "icon.icns")
         self.assertEqual(info["CFBundlePackageType"], "APPL")
+        # Without these WebKit hides navigator.mediaDevices and the Teams viewer gets no video.
+        self.assertIn("never uses the camera", info["NSCameraUsageDescription"])
+        self.assertIn("never uses the microphone", info["NSMicrophoneUsageDescription"])
 
     def test_launcher_runs_bundled_interpreter(self):
         script = make_app.launcher_script(Path("/repo dir"), Path("/bin/uv"))
