@@ -129,11 +129,28 @@ The steps are stored in `~/Library/Application Support/mac-to-windows-keyboard/t
 
 Instead of watching the Teams app on the Mac, Mac2Win KVM can join the same meeting itself in a hidden, receive-only web view and show the Windows share in its own **Windows Screen** window (the **Windows Screen** button, or **Teams → Show Windows Screen**). Assistants get the same picture with the `windows_screenshot` MCP tool, so they don't need Computer Use. The Teams app on the Mac can stay closed.
 
-- The viewer joins Teams on the web as a guest named **Mac2Win viewer**, with no microphone, camera or audio (the web view is denied mic and camera access). It runs in an off-screen window, so it needs no Screen Recording permission, and it sends nothing to Windows.
-- **Admit it from the lobby each time.** In Teams on the Mac (or any device where you're in the meeting), admit **Mac2Win viewer** from the lobby; Teams may list it as *Unverified*. Until then the app shows "waiting in the lobby" and `windows_screenshot` returns an error asking you to admit it.
-- The lobby bypass is deliberately not turned on: with it, anyone holding the meeting link could watch the Windows screen without being admitted.
+- The viewer joins Teams on the web as a guest named **Mac2Win viewer**, with no microphone, camera or audio (mic and camera requests are refused before Teams can ask). It runs in an off-screen window, so it needs no Screen Recording permission, and it sends nothing to Windows.
+- **Lobby.** If the meeting lets everyone bypass the lobby (step 1 below), the viewer goes straight in. Otherwise, or if your organization's Teams policy still holds anonymous guests in the lobby, admit **Mac2Win viewer** in Teams on any device where you're in the meeting; Teams may list it as *Unverified*. Until then the app shows "waiting in the lobby" and `windows_screenshot` returns an error asking you to admit it.
+- **Privacy.** With the lobby bypass, anyone holding the meeting link can join and watch the Windows screen without being admitted. Use a fresh one-time meeting, don't share its link, and stop sharing when you're done. Leave the bypass off if that's not acceptable; you then click Admit each time.
 - `windows_screenshot` starts the viewer if needed. Frames are saved to `~/Library/Application Support/mac-to-windows-keyboard/windows-screen.jpg` (private to your user) and overwritten each time. Stop the viewer with **Stop Viewer** or **Teams → Stop Windows Screen Viewer**; quitting the app also leaves the call.
-- Windows must be sharing (see above). If nothing is shared, the tool says so; if the meeting has a camera feed but no share, the image may be that camera.
+- Windows must be sharing (see above). If nothing is shared, the tool says so. The viewer prefers the video Teams labels as shared content; if the meeting has a camera feed but no share, the image may be that camera.
+
+### Step by step: let an assistant see Windows
+
+1. **Create the meeting** (once per session, or reuse a recurring one). An assistant with Microsoft Graph or WorkIQ access can do it:
+   - `POST /me/events` with a subject such as "Mac2Win", `"isOnlineMeeting": true`, `"onlineMeetingProvider": "teamsForBusiness"`, `"showAs": "free"`, `"isReminderOn": false` and no attendees.
+   - Optional lobby bypass: find the meeting with `GET /me/onlineMeetings?$filter=JoinWebUrl eq '<onlineMeeting.joinUrl from the event>'`, then `PATCH /me/onlineMeetings/{id}` with `{"lobbyBypassSettings": {"scope": "everyone"}}`. Read the privacy note above first.
+   - Keep the short `https://teams.microsoft.com/meet/<id>?p=...` link from the event body. `onlineMeeting.joinUrl` is usually a long `/l/meetup-join/` link over 259 characters.
+2. **Save the link**: the assistant calls `set_teams_meeting_link`, or you use **Teams → Set Meeting Link…** or `python3 kvm_teams.py --set-url "LINK"`.
+3. **Start the share**: click **Share to Teams**, or the assistant calls `start_teams_screen_share`. On Windows, click **Add this device** (or **Join now**) during the 30-second wait, never **Transfer**, then click **Share** in the share picker.
+4. **See Windows**: click **Windows Screen** in the app, or the assistant calls `windows_screenshot`. Admit **Mac2Win viewer** if it waits in the lobby. You don't need the Teams app open on the Mac for this; if you joined there to admit the viewer, you can leave once it's in.
+5. **Finish**: the assistant calls `stop_teams_screen_share` (Ctrl+Shift+H on Windows, with Teams focused) or you click **Leave** on Windows. Stop the viewer (**Stop Viewer**) and leave or close Teams on the Mac.
+
+Troubleshooting:
+- *"Waiting in the lobby"*: admit **Mac2Win viewer** in Teams. If it waits even with the bypass set, your tenant's meeting policy keeps anonymous guests in the lobby; admit it by hand.
+- *Wrong picture (a camera, or a tiny frame)*: Windows isn't sharing yet, or just started; click **Share** on Windows and try again a few seconds later.
+- *"Opening the Teams meeting…" for minutes*: stop the viewer and start it again; check the saved link points to a meeting that hasn't ended.
+- *New features don't show up*: after `git pull`, run `uv run make_app.py`, quit and reopen Mac2Win KVM, and restart your assistant so it reloads the MCP tools.
 
 ## Usage
 

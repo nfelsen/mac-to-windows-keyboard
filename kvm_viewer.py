@@ -72,7 +72,7 @@ JOIN_SCRIPT = r"""
   const norm = s => (s || '').replace(/[\u2018\u2019]/g, "'").replace(/\s+/g, ' ').trim().toLowerCase();
   const body = norm(document.body && document.body.innerText);
   const enabled = e => !e.disabled && e.getAttribute('aria-disabled') !== 'true';
-  const find = text => [...document.querySelectorAll('button,[role=button],[role=radio],[role=menuitemradio],label')]
+  const find = text => [...document.querySelectorAll('button,[role=button],[role=radio],[role=menuitemradio],label,input[type=radio]')]
     .find(e => enabled(e) && (norm(e.innerText) === text || norm(e.getAttribute('aria-label')) === text));
   if (/you've been removed|you have been removed|denied access|denied your request|meeting has ended|you left the meeting|call ended/.test(body))
     return 'ended';
@@ -89,11 +89,29 @@ JOIN_SCRIPT = r"""
     return 'prejoin';
   }
   b = find("don't use audio");
-  if (b && !window.__m2wNoAudio) { b.click(); window.__m2wNoAudio = true; return 'prejoin'; }
+  if (b && !window.__m2wNoAudio) {
+    if (!b.checked && b.getAttribute('aria-checked') !== 'true') b.click();
+    window.__m2wNoAudio = true;
+    return 'prejoin';
+  }
   b = find('join now');
   if (b && window.__m2wNoAudio) { b.click(); return 'joining'; }
   return input ? 'prejoin' : 'loading';
 })
+"""
+
+
+# Injected before Teams' own scripts: refuse every mic/camera request at once, so
+# Teams never waits on a permission prompt and the viewer can never send media.
+NO_MEDIA_SCRIPT = r"""
+(function(){
+  const md = navigator.mediaDevices;
+  if (!md) return;
+  const deny = () => Promise.reject(new DOMException('Mac2Win viewer is receive-only', 'NotAllowedError'));
+  md.getUserMedia = deny;
+  md.getDisplayMedia = deny;
+  md.enumerateDevices = () => Promise.resolve([]);
+})();
 """
 
 

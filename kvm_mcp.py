@@ -79,7 +79,11 @@ def set_teams_meeting_link(url: str) -> str:
     "teamsForBusiness", showAs "free" (so their calendar stays free), isReminderOn false, and
     no attendees. Pass the short https://teams.microsoft.com/meet/<id>?p=... link found in the
     event body; onlineMeeting.joinUrl is usually a long /l/meetup-join/ link over 259
-    characters, so use it only if it fits. Only https://teams.microsoft.com/... or msteams:
+    characters, so use it only if it fits. If the user agreed to let everyone skip the lobby
+    (so windows_screenshot's viewer joins without an Admit click; anyone with the link can then
+    watch Windows), find the meeting with GET /me/onlineMeetings?$filter=JoinWebUrl eq
+    '<onlineMeeting.joinUrl>' and PATCH /me/onlineMeetings/{id} with
+    {"lobbyBypassSettings": {"scope": "everyone"}}. Only https://teams.microsoft.com/... or msteams:
     links are accepted, at most 259 characters once typed as msteams:// (the Windows Run box
     limit). Windows opens the link in its installed, signed-in Teams app, not a browser.
     """
@@ -125,9 +129,10 @@ def windows_screenshot() -> Image:
     Needs the Mac2Win KVM app running and Windows sharing its screen in the saved Teams
     meeting (start_teams_screen_share). The app watches the share through a hidden,
     receive-only Teams guest named "Mac2Win viewer" (no mic, camera, or audio). On the first
-    call it joins the saved meeting and lands in the lobby: this call then fails and asks you
-    to have the user admit "Mac2Win viewer" in Teams (Teams shows it as an Unverified guest);
-    call again once they have. Frames are the shared screen at full resolution, a moment
+    call it joins the saved meeting (about 10 seconds; call again if it is still joining). If
+    the meeting doesn't let everyone bypass the lobby, or tenant policy holds guests there,
+    the call fails and asks you to have the user admit "Mac2Win viewer" in Teams (shown as an
+    Unverified guest); call again once they have. Frames are the shared screen at full resolution, a moment
     behind live. Use it to read command output after type_on_windows or press_keys.
     """
     try:

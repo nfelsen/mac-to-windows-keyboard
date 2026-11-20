@@ -52,13 +52,17 @@ class Viewer:
         config = WebKit.WKWebViewConfiguration.alloc().init()
         config.setWebsiteDataStore_(WebKit.WKWebsiteDataStore.nonPersistentDataStore())
         config.setMediaTypesRequiringUserActionForPlayback_(WebKit.WKAudiovisualMediaTypeNone)
+        no_media = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
+            kv.NO_MEDIA_SCRIPT, WebKit.WKUserScriptInjectionTimeAtDocumentStart, False)
+        config.userContentController().addUserScript_(no_media)
         rect = Foundation.NSMakeRect(0, 0, *WEB_SIZE)
         self.web = WebKit.WKWebView.alloc().initWithFrame_configuration_(rect, config)
         self.web.setCustomUserAgent_(kv.USER_AGENT)
         self.web.setUIDelegate_(self.delegate)
-        # Off-screen but ordered in, so WebKit keeps decoding video.
+        # Off-screen but ordered in, so WebKit keeps decoding video. It must be a titled
+        # window: WebKit throttles a borderless off-screen one and Teams never connects.
         self.web_window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
-            rect, AppKit.NSWindowStyleMaskBorderless, AppKit.NSBackingStoreBuffered, False)
+            rect, AppKit.NSWindowStyleMaskTitled, AppKit.NSBackingStoreBuffered, False)
         self.web_window.setReleasedWhenClosed_(False)
         self.web_window.setExcludedFromWindowsMenu_(True)
         self.web_window.setCollectionBehavior_(
