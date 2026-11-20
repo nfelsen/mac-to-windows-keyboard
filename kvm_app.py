@@ -23,6 +23,7 @@ import kvm_panel as kp
 import kvm_core as kc
 import kvm_mcp_setup as ms
 import kvm_teams as kt
+import kvm_viewer as kv
 import windows_keyboard as wk
 
 BUTTON_BITS = {0: 1, 1: 2, 2: 4}  # NSEvent buttonNumber -> HID left/right/middle
@@ -239,6 +240,7 @@ class Controller:
         self.typing_label = ""
         self.typing_finish = None
         self.bridge = None
+        self.viewer = None  # kvm_viewer_window.Viewer, created on first use
         self.panel = kp.Panel()
         self.popover = None
         self.setup_window = None
@@ -367,7 +369,11 @@ class Controller:
         self.teams_button = self.control_button(
             " Share to Teams", "shareTeams:", "person.2.wave.2",
             "Windows joins your saved Teams meeting and shares its screen (Teams menu to set the link)")
-        row = stack([self.paste_button, self.teams_button, self.progress, self.stop_button, self.notice],
+        self.screen_button = self.control_button(
+            " Windows Screen", "watchWindows:", "display",
+            f"Watch the Windows share here: a hidden \u201c{kv.VIEWER_NAME}\u201d guest joins your saved "
+            "Teams meeting (no mic, camera, or audio); admit it from the lobby once")
+        row = stack([self.paste_button, self.teams_button, self.screen_button, self.progress, self.stop_button, self.notice],
                     spacing=12,
                     alignment=AppKit.NSLayoutAttributeCenterY)
         return row
@@ -615,6 +621,9 @@ class Controller:
         for title, action in (("Share Windows Screen to Teams", "shareTeams:"),
                               ("Leave Teams Call on Windows", "leaveTeams:"),
                               (None, None),
+                              ("Show Windows Screen", "watchWindows:"),
+                              ("Stop Windows Screen Viewer", "stopViewer:"),
+                              (None, None),
                               ("Set Meeting Link…", "setTeamsLink:")):
             if title is None:
                 teams.addItem_(AppKit.NSMenuItem.separatorItem())
@@ -822,6 +831,8 @@ class Controller:
 
     def handle_bridge_request(self, request, teams_step=False):
         """Runs on a bridge worker thread; hops to the main thread for state."""
+        if request.get("op") == "screenshot":
+            return self.bridge_screenshot()
         if request.get("op") == "status":
             result = {}
             done = threading.Event()
@@ -858,6 +869,65 @@ class Controller:
         if outcome["error"]:
             raise kb.BridgeError(outcome["error"])
         return kb.describe(request, taps)
+
+    # ----- Windows screen viewer -----
+
+    def get_viewer(self):
+        if self.viewer is None:
+            import kvm_viewer_window as kvw  # WebKit loads only when the viewer is used
+            self.viewer = kvw.Viewer(self.viewer_changed)
+        return self.viewer
+
+    def viewer_changed(self, message, level):
+        self.set_notice(f"Windows Screen: {message}", "error" if level == "error" else "info")
+
+    def start_viewer(self):
+        """Join the saved meeting as the hidden viewer; returns an error message or None."""
+        try:
+            self.get_viewer().start(kt.load_config().meeting_url)
+        except kb.BridgeError as exc:
+            return str(exc)
+        return None
+
+    def watch_windows(self):
+        try:
+            if not kt.load_config().meeting_url and not self.ask_meeting_link():
+                return
+        except kb.BridgeError as exc:
+            return self.set_notice(str(exc), "error")
+        error = self.start_viewer()
+        if error:
+            return self.set_notice(error, "error")
+        self.viewer.show_preview(self.delegate)
+
+    def stop_viewer(self):
+        if self.viewer:
+            self.viewer.stop()
+
+    def bridge_screenshot(self):
+        """Worker thread: start the viewer if needed, else return the current frame."""
+        done = threading.Event()
+        result = {}
+
+        def finish(frame, error):
+            result["frame"], result["error"] = frame, error
+            done.set()
+
+        def start():
+            viewer = self.get_viewer()
+            if not viewer.running:
+                error = self.start_viewer()
+                return finish(None, error or (
+                    f"The Windows screen viewer is joining the saved Teams meeting now. {kv.ADMIT_HINT} "
+                    "Ask the user to do that, then call windows_screenshot again."))
+            viewer.capture(finish)
+        AppHelper.callAfter(start)
+        if not done.wait(20):
+            raise kv.ViewerError("The Windows screen viewer did not answer in time.")
+        if result["error"]:
+            raise kv.ViewerError(result["error"])
+        frame = result["frame"]
+        return kv.screenshot_message(frame, kv.save_frame(frame))
 
     # ----- Teams screen share -----
 
@@ -1063,6 +1133,7 @@ class Controller:
             self.set_notice(f"Copilot bridge unavailable: {exc}", "error")
 
     def shutdown(self):
+        self.stop_viewer()
         if self.bridge:
             self.bridge.close()
             self.bridge = None
@@ -1106,6 +1177,12 @@ class Delegate(AppKit.NSObject):
 
     def leaveTeams_(self, sender):
         self.controller.leave_teams()
+
+    def watchWindows_(self, sender):
+        self.controller.watch_windows()
+
+    def stopViewer_(self, sender):
+        self.controller.stop_viewer()
 
     def setTeamsLink_(self, sender):
         self.controller.ask_meeting_link()

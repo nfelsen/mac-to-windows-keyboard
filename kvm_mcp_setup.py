@@ -286,6 +286,12 @@ def markdown(uv: str = PLACEHOLDER_UV, repo: str = PLACEHOLDER_REPO) -> str:
         "in Teams' share picker. See the README's "
         "Teams section for details and for editing the steps.",
         "",
+        "Without Computer Use, the assistant can call `windows_screenshot`: Mac2Win KVM joins the "
+        "saved meeting in a hidden, receive-only web view (guest **Mac2Win viewer**, no mic, camera "
+        "or audio) and returns the Windows share as an image. Admit **Mac2Win viewer** from the "
+        "lobby in Teams each time; the lobby bypass is deliberately left off so nobody else with "
+        "the link can watch Windows.",
+        "",
     ]
     return "\n".join(out)
 

@@ -73,6 +73,7 @@ Tools:
 | `press_keys(combo)` | Presses keys such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `win+r`, or `ctrl+a ctrl+c` (up to 10, in order). Modifiers: ctrl, shift, alt, win. |
 | `windows_keyboard_status()` | Shows the port, baud rate, whether Windows sees the keyboard, and Caps Lock. Types nothing. |
 | `start_teams_screen_share()` | Makes Windows join your saved Teams meeting and share its screen (see [Teams screen share](#teams-screen-share)). Opens only the saved link. |
+| `windows_screenshot()` | Returns the current Windows screen as an image, from the app's hidden Teams viewer (see [Windows Screen viewer](#windows-screen-viewer)). Sends nothing to Windows. |
 | `set_teams_meeting_link(url)` | Saves the meeting link that `start_teams_screen_share` opens, with the same checks as the app. Sends nothing to Windows. |
 | `stop_teams_screen_share()` | Leaves the Teams call on Windows (Ctrl+Shift+H). |
 
@@ -123,6 +124,16 @@ Expect two clicks on Windows:
 If you join late, Ctrl+Shift+E arrives before you are in the call and does nothing; press it again from the app's special keys or click Share in Teams. `teams.json` files saved with the older default (which pressed Enter to join) are switched to this sequence automatically. Microphone and camera aren't touched by default, because their current state is unknown. **Leave Teams Call on Windows** (or `stop_teams_screen_share`) presses Ctrl+Shift+H, which needs Teams to be the focused window. Esc or **Stop** in the app stops a running sequence. Each key step uses the same checks as other typing: it is refused while Windows Caps Lock is on or Windows doesn't see the keyboard, and all keys are released afterwards. `python3 kvm_teams.py --show` prints the saved settings without sending anything.
 
 The steps are stored in `~/Library/Application Support/mac-to-windows-keyboard/teams.json` as `share_steps`, and you can edit them. Each step is `"open"` (Win+R, link, Enter), `"wait N"` (seconds, at most 60), or `"keys COMBO"` (same syntax as `press_keys`). For example, add `"keys ctrl+shift+m"` to toggle the microphone (Ctrl+Shift+O toggles the camera), or lengthen the waits on a slow PC. If you find a keyboard path through the join dialog or the share picker by pressing keys one at a time while watching Windows, you can add it as `"keys ..."` steps; nothing is pressed there by default because the focus order isn't documented. `start_teams_screen_share` takes no link and only opens the saved one. An assistant can save a new link with `set_teams_meeting_link`, which accepts only Teams links (at most 259 characters) and sends nothing to Windows. For example, an assistant with Microsoft Graph or WorkIQ access can create a fresh one-time meeting for you, save its short `https://teams.microsoft.com/meet/<id>?p=...` link, and then start the share. Create it with `POST /me/events` using `"isOnlineMeeting": true`, `"onlineMeetingProvider": "teamsForBusiness"`, `"showAs": "free"` (so your calendar still shows you as free), `"isReminderOn": false`, and no attendees. Take the short `/meet/` link from the event body: Graph's `onlineMeeting.joinUrl` is usually a long `/l/meetup-join/` link over 259 characters, so use it only if it fits. Keep tool approval on so you see each link before it is saved.
+
+### Windows Screen viewer
+
+Instead of watching the Teams app on the Mac, Mac2Win KVM can join the same meeting itself in a hidden, receive-only web view and show the Windows share in its own **Windows Screen** window (the **Windows Screen** button, or **Teams → Show Windows Screen**). Assistants get the same picture with the `windows_screenshot` MCP tool, so they don't need Computer Use. The Teams app on the Mac can stay closed.
+
+- The viewer joins Teams on the web as a guest named **Mac2Win viewer**, with no microphone, camera or audio (the web view is denied mic and camera access). It runs in an off-screen window, so it needs no Screen Recording permission, and it sends nothing to Windows.
+- **Admit it from the lobby each time.** In Teams on the Mac (or any device where you're in the meeting), admit **Mac2Win viewer** from the lobby; Teams may list it as *Unverified*. Until then the app shows "waiting in the lobby" and `windows_screenshot` returns an error asking you to admit it.
+- The lobby bypass is deliberately not turned on: with it, anyone holding the meeting link could watch the Windows screen without being admitted.
+- `windows_screenshot` starts the viewer if needed. Frames are saved to `~/Library/Application Support/mac-to-windows-keyboard/windows-screen.jpg` (private to your user) and overwritten each time. Stop the viewer with **Stop Viewer** or **Teams → Stop Windows Screen Viewer**; quitting the app also leaves the call.
+- Windows must be sharing (see above). If nothing is shared, the tool says so; if the meeting has a camera feed but no share, the image may be that camera.
 
 ## Usage
 
@@ -178,5 +189,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app test_kvm_mcp_setup test_kvm_teams
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app test_kvm_mcp_setup test_kvm_teams test_kvm_viewer
 ```

@@ -47,8 +47,8 @@ DEFAULT_SHARE_STEPS = ["open", "wait 30", "keys ctrl+shift+e"]
 # Earlier default, still saved in older teams.json files; replaced on load.
 OLD_DEFAULT_SHARE_STEPS = ["open", "wait 15", "keys enter", "wait 8", "keys ctrl+shift+e"]
 LEAVE_STEPS = ["keys ctrl+shift+h"]
-VERIFY_HINT = ("You cannot see Windows. Check the result in a screenshot of the Teams window on "
-               "the Mac if you have one; otherwise ask the user. Expect two clicks by the user on "
+VERIFY_HINT = ("Check the result with windows_screenshot (or a screenshot of the Teams window on "
+               "the Mac); otherwise ask the user. Expect two clicks by the user on "
                "Windows: \"Add this device\" (or \"Join now\") to join, then \"Share\" in Teams' "
                "share picker (Entire screen is preselected, but keys don't press Share).")
 

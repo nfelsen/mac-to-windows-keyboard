@@ -7,18 +7,20 @@ Uses the running kvm_app.py if there is one, otherwise opens the cable directly.
 
 import sys
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Image, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import kvm_bridge as kb
 import kvm_teams as kt
+import kvm_viewer as kv
 
 mcp = MCPServer(
     "windows-keyboard",
     instructions=(
-        "Types on the user's Windows PC through a USB keyboard cable. You cannot see the "
-        "Windows screen or any output; ask the user what happened after each action."
+        "Types on the user's Windows PC through a USB keyboard cable. To see the Windows "
+        "screen, use windows_screenshot (needs Windows sharing its screen to the saved Teams "
+        "meeting); otherwise ask the user what happened after each action."
     ),
 )
 SENDS_KEYS = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=True)
@@ -39,8 +41,8 @@ def type_on_windows(text: str, press_enter: bool = False, multiline: bool = Fals
     is unsupported (curly quotes, em dashes, non-English letters), nothing is typed. Max
     4000 characters. Enter is pressed only if press_enter is true. Line breaks are rejected
     unless multiline is true, because each one acts as Enter. All keys are released afterwards.
-    You cannot see the Windows screen or any command output: after typing, ask the user what
-    happened (or to paste the output) before continuing.
+    To see the result, call windows_screenshot if Windows is sharing its screen to the saved
+    Teams meeting; otherwise ask the user what happened (or to paste the output).
     """
     return run({"op": "type", "text": text, "press_enter": press_enter, "multiline": multiline})
 
@@ -52,7 +54,8 @@ def press_keys(combo: str) -> str:
 
     Modifiers: ctrl, shift, alt, win. Up to 10 combinations separated by spaces or commas
     are pressed in order, e.g. "ctrl+a ctrl+c". All keys are released afterwards.
-    You cannot see the Windows screen: ask the user what happened before continuing.
+    To see the result, call windows_screenshot if Windows is sharing its screen to Teams;
+    otherwise ask the user what happened before continuing.
     """
     return run({"op": "keys", "combo": combo})
 
@@ -89,7 +92,7 @@ def set_teams_meeting_link(url: str) -> str:
 @mcp.tool(annotations=SENDS_KEYS)
 def start_teams_screen_share() -> str:
     """Make the Windows PC join the user's saved Microsoft Teams meeting and share its screen,
-    so the Windows screen can be seen in the Teams window on the Mac.
+    so the Windows screen can be seen on the Mac (windows_screenshot, or the Teams window).
 
     Only the saved meeting link is ever opened (set in the app, with kvm_teams.py --set-url,
     or with set_teams_meeting_link); this tool takes no link. Sends Win+R, the link as
@@ -101,8 +104,8 @@ def start_teams_screen_share() -> str:
     "Transfer", which would move their Mac call); otherwise they click "Join now". After
     Ctrl+Shift+E, Teams' share picker has "Entire screen" preselected but keystrokes don't
     press its Share button, so they click "Share". Do not send Enter or Tab to get past
-    either screen. You cannot see Windows: afterwards, check a screenshot of the Teams
-    window on the Mac if you have one, otherwise ask the user whether the share started.
+    either screen. Afterwards, check with windows_screenshot (the app's hidden viewer may first
+    need admitting from the lobby), a screenshot of the Mac Teams window, or ask the user.
     """
     return run_teams(lambda: kt.share_actions(kt.load_config()))
 
@@ -110,9 +113,32 @@ def start_teams_screen_share() -> str:
 @mcp.tool(annotations=SENDS_KEYS)
 def stop_teams_screen_share() -> str:
     """Leave the Teams call on the Windows PC (Ctrl+Shift+H), which also stops sharing.
-    Teams must be the focused window on Windows. You cannot see Windows: verify via a
-    screenshot of the Mac Teams window if available, otherwise ask the user."""
+    Teams must be the focused window on Windows. Once sharing stops, windows_screenshot
+    can no longer see Windows; ask the user to confirm the call ended."""
     return run_teams(kt.leave_actions)
+
+
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=True))
+def windows_screenshot() -> Image:
+    """Return the current Windows screen as a JPEG image. Sends nothing to Windows.
+
+    Needs the Mac2Win KVM app running and Windows sharing its screen in the saved Teams
+    meeting (start_teams_screen_share). The app watches the share through a hidden,
+    receive-only Teams guest named "Mac2Win viewer" (no mic, camera, or audio). On the first
+    call it joins the saved meeting and lands in the lobby: this call then fails and asks you
+    to have the user admit "Mac2Win viewer" in Teams (Teams shows it as an Unverified guest);
+    call again once they have. Frames are the shared screen at full resolution, a moment
+    behind live. Use it to read command output after type_on_windows or press_keys.
+    """
+    try:
+        message = kb.send_to_app({"op": "screenshot"}, kb.SOCKET_PATH, timeout=30)
+        if message is None:
+            raise kv.ViewerError("The Mac2Win KVM app is not running; the Windows screen viewer runs "
+                                 "inside it. Ask the user to open it.")
+        data, _ = kv.read_screenshot(message)
+    except (kb.BridgeError, OSError) as exc:
+        raise ToolError(str(exc)) from None
+    return Image(data=data, format="jpeg")
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
