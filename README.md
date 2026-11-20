@@ -108,11 +108,11 @@ Keep tool approval turned on for this server: approving a tool call is what lets
 The assistant can't see Windows, but if Windows shares its screen in a Teams meeting that you also join on the Mac, an assistant that can take Mac screenshots (for example with Computer Use) can read the output from the Teams window.
 
 1. Create a Teams meeting you own, for example a recurring "Mac2Win" meeting, and copy its join link.
-2. In the app, choose **Teams → Set Meeting Link…** and paste it. You can also run `python3 kvm_teams.py --set-url "LINK"`. Only `https://teams.microsoft.com/...` and `msteams:` links are accepted, and they must be at most 259 characters (the Windows Run box limit). If a long `/l/meetup-join/` link is rejected, use the short `/meet/` link from the invite.
+2. In the app, choose **Teams → Set Meeting Link…** and paste it. You can also run `python3 kvm_teams.py --set-url "LINK"`. Only `https://teams.microsoft.com/...` and `msteams:` links are accepted, and they must be at most 259 characters as typed, after `https://` becomes `msteams://` (the Windows Run box limit). If a long `/l/meetup-join/` link is rejected, use the short `/meet/` link from the invite.
 3. Join the meeting on the Mac. Then click **Share to Teams** in the app (or use the Teams menu), or ask your assistant to run `start_teams_screen_share`.
 
 The default sequence is:
-- Win+R, the saved link, then Enter. `/l/` links are opened as `msteams://` so they go straight to the Teams desktop app. Other links open the browser first, which may ask to open Teams.
+- Win+R, the saved link, then Enter. `https://teams.microsoft.com/...` links are typed as `msteams://teams.microsoft.com/...`, so they open in the installed, signed-in Teams app on Windows rather than in a browser, which would join as an unverified guest and wait in the lobby. The Teams desktop app must be installed on Windows.
 - Wait 15 seconds, then press Enter for "Join now".
 - Wait 8 seconds, then press Ctrl+Shift+E to start sharing.
 

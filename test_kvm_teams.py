@@ -28,9 +28,18 @@ class ValidateUrlTest(unittest.TestCase):
             with self.assertRaises(kt.TeamsError, msg=url):
                 kt.validate_url(url)
 
-    def test_desktop_link_only_for_deep_links(self):
+    def test_desktop_link_opens_teams_app(self):
         self.assertEqual(kt.desktop_link(URL), "msteams://" + URL[len("https://"):])
-        self.assertEqual(kt.desktop_link(SHORT), SHORT)
+        self.assertEqual(kt.desktop_link(SHORT), "msteams://teams.microsoft.com/meet/2512345678?p=abcDEF")
+        msteams = "msteams://teams.microsoft.com/meet/1?p=x"
+        self.assertEqual(kt.desktop_link(msteams), msteams)
+
+    def test_length_limit_applies_to_typed_link(self):
+        base = "https://teams.microsoft.com/meet/"
+        fits = base + "1" * (kt.MAX_URL - 2 - len(base))
+        self.assertEqual(len(kt.desktop_link(kt.validate_url(fits))), kt.MAX_URL)
+        with self.assertRaisesRegex(kt.TeamsError, "typed as 260"):
+            kt.validate_url(fits + "1")
 
 
 class StepsTest(unittest.TestCase):

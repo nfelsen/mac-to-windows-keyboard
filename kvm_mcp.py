@@ -76,9 +76,9 @@ def set_teams_meeting_link(url: str) -> str:
     "teamsForBusiness", showAs "free" (so their calendar stays free), isReminderOn false, and
     no attendees. Pass the short https://teams.microsoft.com/meet/<id>?p=... link found in the
     event body; onlineMeeting.joinUrl is usually a long /l/meetup-join/ link over 259
-    characters, so use it only if it fits. Only https://teams.microsoft.com/... or msteams: links of at most 259
-    characters are accepted (the Windows Run box limit); prefer the short
-    https://teams.microsoft.com/meet/... join link over long /l/meetup-join/ links.
+    characters, so use it only if it fits. Only https://teams.microsoft.com/... or msteams:
+    links are accepted, at most 259 characters once typed as msteams:// (the Windows Run box
+    limit). Windows opens the link in its installed, signed-in Teams app, not a browser.
     """
     try:
         return kt.set_link(url)
@@ -92,8 +92,9 @@ def start_teams_screen_share() -> str:
     so the Windows screen can be seen in the Teams window on the Mac.
 
     Only the saved meeting link is ever opened (set in the app, with kvm_teams.py --set-url,
-    or with set_teams_meeting_link); this tool takes no link. Sends Win+R, the link, Enter, then the saved
-    steps (by default: wait, Enter to join, wait, Ctrl+Shift+E to share). Takes about 25
+    or with set_teams_meeting_link); this tool takes no link. Sends Win+R, the link as
+    msteams://... (so the installed, signed-in Teams app opens it, not a browser), Enter,
+    then the saved steps (by default: wait, Enter to join, wait, Ctrl+Shift+E to share). Takes about 25
     seconds. You cannot see Windows: afterwards, check a screenshot of the Teams window on
     the Mac if you have one, otherwise ask the user whether the share started. The user may
     need to click "Join now" or pick the screen in Teams' share picker by hand.

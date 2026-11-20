@@ -69,9 +69,6 @@ def validate_url(url) -> str:
     url = url.strip()
     if any(ch.isspace() for ch in url) or not url.isascii() or not url.isprintable():
         raise TeamsError("The meeting link must be one line of plain ASCII without spaces.")
-    if len(url) > MAX_URL:
-        raise TeamsError(f"The meeting link is {len(url)} characters; the Windows Run box takes at most "
-                         f"{MAX_URL}. Use the short https://teams.microsoft.com/meet/... link from the invite.")
     parts = urlsplit(url)
     scheme = parts.scheme.lower()
     if scheme == "https":
@@ -84,6 +81,11 @@ def validate_url(url) -> str:
         raise TeamsError("The meeting link must start with https://teams.microsoft.com/ or msteams:.")
     if not parts.path.strip("/"):
         raise TeamsError("That is not a meeting link (no path).")
+    typed = desktop_link(url)
+    if len(typed) > MAX_URL:
+        raise TeamsError(f"The meeting link is typed as {len(typed)} characters ({typed[:20]}…); the Windows "
+                         f"Run box takes at most {MAX_URL}. Use the short "
+                         "https://teams.microsoft.com/meet/... link from the invite.")
     try:
         wk.encode_text(url)
     except ValueError as exc:
@@ -92,9 +94,9 @@ def validate_url(url) -> str:
 
 
 def desktop_link(url: str) -> str:
-    """Open /l/ deep links straight in the Teams desktop app instead of a browser."""
-    parts = urlsplit(url)
-    if parts.scheme.lower() == "https" and parts.path.startswith("/l/"):
+    """Rewrite https://teams.microsoft.com/... as msteams://... so Windows opens the
+    installed, signed-in Teams app instead of a browser (which joins as a guest)."""
+    if urlsplit(url).scheme.lower() == "https":
         return "msteams://" + url.split("://", 1)[1]
     return url
 
@@ -218,6 +220,7 @@ def main(argv=None) -> int:
         print(f"Meeting link: {config.meeting_url or '(not set)'}")
         print(f"Share steps:  {json.dumps(config.share_steps)}")
         if config.meeting_url:
+            print(f"Typed as:     {desktop_link(validate_url(config.meeting_url))}")
             print("Actions:      " + " → ".join(a.label for a in share_actions(config)))
     except TeamsError as exc:
         print(f"Error: {exc}", file=sys.stderr)
