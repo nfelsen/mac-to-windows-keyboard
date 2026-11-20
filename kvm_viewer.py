@@ -143,11 +143,12 @@ ERROR_LOG_SCRIPT = r"""
 })();
 """
 
-# A one-line snapshot of the page for the app log (no page text, just its shape).
+# A one-line snapshot of the page for the app log: its shape and button labels, no page text.
 PAGE_INFO_SCRIPT = r"""
 JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: document.readyState,
   text: (document.body && document.body.innerText || '').length,
   visibility: document.visibilityState, media: navigator.mediaDevices && navigator.mediaDevices.__m2wStub ? 'stub' : 'webkit', rtc: typeof RTCPeerConnection, videos: document.querySelectorAll('video').length,
+  buttons: [...document.querySelectorAll('button,[role=button]')].map(b => (b.innerText || b.getAttribute('aria-label') || '').trim().slice(0, 40)).filter(Boolean).slice(0, 12),
   scripts: document.scripts.length, resources: performance.getEntriesByType('resource').length,
   errors: window.__m2wErrors || []})
 """
