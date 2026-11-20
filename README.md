@@ -110,7 +110,7 @@ The assistant can't see Windows, but if Windows shares its screen in a Teams mee
 
 1. Create a Teams meeting you own, for example a recurring "Mac2Win" meeting, and copy its join link.
 2. In the app, choose **Teams → Set Meeting Link…** and paste it. You can also run `python3 kvm_teams.py --set-url "LINK"`. Only `https://teams.microsoft.com/...` and `msteams:` links are accepted, and they must be at most 259 characters as typed, after `https://` becomes `msteams://` (the Windows Run box limit). If a long `/l/meetup-join/` link is rejected, use the short `/meet/` link from the invite.
-3. Join the meeting on the Mac. Then click **Share to Teams** in the app (or use the Teams menu), or ask your assistant to run `start_teams_screen_share`.
+3. Join the meeting on the Mac. Then click **Windows Screen…** in the app and **Share to Teams** in its guide (or use **Teams → Share Windows Screen to Teams**), or ask your assistant to run `start_teams_screen_share`.
 
 The default sequence is:
 - Win+R, the saved link, then Enter. `https://teams.microsoft.com/...` links are typed as `msteams://teams.microsoft.com/...`, so they open in the installed, signed-in Teams app on Windows rather than in a browser, which would join as an unverified guest and wait in the lobby. The Teams desktop app must be installed on Windows.
@@ -127,7 +127,9 @@ The steps are stored in `~/Library/Application Support/mac-to-windows-keyboard/t
 
 ### Windows Screen viewer
 
-Instead of watching the Teams app on the Mac, Mac2Win KVM can join the same meeting itself in a hidden, receive-only web view and show the Windows share in its own **Windows Screen** window (the **Windows Screen** button, or **Teams → Show Windows Screen**). Assistants get the same picture with the `windows_screenshot` MCP tool, so they don't need Computer Use. The Teams app on the Mac can stay closed.
+Instead of watching the Teams app on the Mac, Mac2Win KVM can join the same meeting itself in a hidden, receive-only web view and show the Windows share in its own **Windows Screen** window (the **Windows Screen…** button, or **Teams → Show Windows Screen**). Assistants get the same picture with the `windows_screenshot` MCP tool, so they don't need Computer Use. The Teams app on the Mac can stay closed.
+
+The **Windows Screen…** button opens the **Windows Screen Setup** guide (also **Teams → Windows Screen Setup Guide…**) until the share is live, then the Windows screen itself. The guide lists the steps below with live status and highlights the one that needs your click; the line next to the button shows that next step.
 
 - The viewer joins Teams on the web as a guest named **Mac2Win viewer**, with no microphone, camera or audio (mic and camera requests are refused before Teams can ask). It runs in an invisible (transparent, click-through) window, so it needs no Screen Recording permission, and it sends nothing to Windows.
 - **Lobby.** Admit **Mac2Win viewer** once in Teams on any device where you're in the meeting; Teams may list it as *Unverified*. Until then the app shows "waiting in the lobby" and `windows_screenshot` returns an error asking you to admit it. Once admitted it stays in until the viewer stops.
@@ -143,7 +145,7 @@ Instead of watching the Teams app on the Mac, Mac2Win KVM can join the same meet
    - Leave the lobby settings alone (no `lobbyBypassSettings` PATCH); see the note above.
    - Keep the short `https://teams.microsoft.com/meet/<id>?p=...` link from the event body. `onlineMeeting.joinUrl` is usually a long `/l/meetup-join/` link over 259 characters.
 2. **Save the link**: the assistant calls `set_teams_meeting_link`, or you use **Teams → Set Meeting Link…** or `python3 kvm_teams.py --set-url "LINK"`.
-3. **Start the share**: click **Share to Teams**, or the assistant calls `start_teams_screen_share`. On Windows, click **Add this device** (or **Join now**) during the 30-second wait, never **Transfer**, then click **Share** in the share picker.
+3. **Start the share**: click **Share to Teams** in the guide, or the assistant calls `start_teams_screen_share`. On Windows, click **Add this device** (or **Join now**) during the 30-second wait, never **Transfer**, then click **Share** in the share picker.
 4. **See Windows**: click **Windows Screen** in the app, or the assistant calls `windows_screenshot`. Admit **Mac2Win viewer** when it waits in the lobby (once per meeting). You don't need the Teams app open on the Mac for this; if you joined there to admit the viewer, you can leave once it's in.
 5. **Finish**: the assistant calls `stop_teams_screen_share` (Ctrl+Shift+H on Windows, with Teams focused) or you click **Leave** on Windows. Stop the viewer (**Stop Viewer**) and leave or close Teams on the Mac.
 

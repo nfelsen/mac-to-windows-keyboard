@@ -479,14 +479,17 @@ class Controller:
         self.notice.setContentCompressionResistancePriority_forOrientation_(
             250, AppKit.NSLayoutConstraintOrientationHorizontal)
         self.notice.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
-        self.teams_button = self.control_button(
-            " Share to Teams", "shareTeams:", "person.2.wave.2",
-            "Windows joins your saved Teams meeting and shares its screen (Teams menu to set the link)")
         self.screen_button = self.control_button(
-            " Windows Screen", "watchWindows:", "display",
-            f"Watch the Windows share here: a hidden \u201c{kv.VIEWER_NAME}\u201d guest joins your saved "
-            "Teams meeting (no mic, camera, or audio); admit it from the lobby once")
-        row = stack([self.paste_button, self.teams_button, self.screen_button, self.progress, self.stop_button, self.notice],
+            " Windows Screen\u2026", "seeWindows:", "display",
+            "See the Windows screen on this Mac. Windows shares its screen into your Teams meeting and a "
+            f"hidden \u201c{kv.VIEWER_NAME}\u201d guest shows it here. Opens a step-by-step guide (a few "
+            "steps need a click from you); once it's live, opens the Windows screen.")
+        self.guide_hint = label("", 12, text_color="secondaryLabelColor")
+        self.guide_hint.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
+        self.guide_hint.setContentCompressionResistancePriority_forOrientation_(
+            249, AppKit.NSLayoutConstraintOrientationHorizontal)
+        row = stack([self.paste_button, self.screen_button, self.guide_hint, self.progress, self.stop_button,
+                     self.notice],
                     spacing=12,
                     alignment=AppKit.NSLayoutAttributeCenterY)
         return row
@@ -766,9 +769,9 @@ class Controller:
             self.cable_error, kc.RELEASE_SHORTCUT, kc.PASTE_SHORTCUT))
         busy = self.typing or bool(self.teams_stop)
         self.paste_button.setEnabled_(bool(self.keyboard) and not busy)
-        self.teams_button.setEnabled_(bool(self.keyboard) and not busy)
         self.progress.setHidden_(not busy)
         self.stop_button.setHidden_(not busy)
+        self.guide_hint.setHidden_(busy)
         self.refresh_guide()
 
     # ----- cable -----
@@ -1008,6 +1011,13 @@ class Controller:
             return str(exc)
         return None
 
+    def see_windows(self):
+        """Main-window button: the live Windows screen if it is up, else the setup guide."""
+        if self.viewer and self.viewer.state == "live":
+            self.viewer.show_preview(self.delegate)
+        else:
+            self.show_guide()
+
     def watch_windows(self):
         try:
             if not kt.load_config().meeting_url and not self.ask_meeting_link():
@@ -1146,8 +1156,6 @@ class Controller:
         AppHelper.callLater(2, self.guide_tick)
 
     def refresh_guide(self):
-        if not self.guide_visible():
-            return
         try:
             link = kt.load_config().meeting_url or ""
         except kb.BridgeError:
@@ -1155,8 +1163,11 @@ class Controller:
         running = any(app.bundleIdentifier() in TEAMS_BUNDLES
                       for app in AppKit.NSWorkspace.sharedWorkspace().runningApplications())
         state = self.viewer.state if self.viewer else "stopped"
-        self.guide.update(kg.steps(link, running, bool(self.keyboard), self.share_status, state),
-                          state == "live")
+        items = kg.steps(link, running, bool(self.keyboard), self.share_status, state)
+        started = self.share_status != kg.SHARE_IDLE or state != "stopped"
+        self.guide_hint.setStringValue_(kg.hint(items, started))
+        if self.guide_visible():
+            self.guide.update(items, state == "live")
 
     def guide_frame(self, image):
         if self.guide is not None:
@@ -1364,6 +1375,9 @@ class Delegate(AppKit.NSObject):
 
     def copySetup_(self, sender):
         self.controller.copy_setup()
+
+    def seeWindows_(self, sender):
+        self.controller.see_windows()
 
     def shareTeams_(self, sender):
         self.controller.share_teams()

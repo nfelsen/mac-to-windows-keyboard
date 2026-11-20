@@ -25,6 +25,7 @@ class Step(NamedTuple):
     status: str
     button: Optional[Tuple[str, str]] = None  # (title, Delegate selector)
     enabled: bool = True
+    hint: Optional[str] = None  # short "Next: …" text for the main window; defaults to the title
 
 
 def short_link(url: str, limit: int = 60) -> str:
@@ -65,7 +66,8 @@ def steps(link: str, teams_running: bool, cable: bool, share: str, viewer: str) 
         result.append(Step("Share the Windows screen",
                            "On Windows, click \u201cAdd this device\u201d (or \u201cJoin now\u201d), never "
                            "\u201cTransfer\u201d. Then click \u201cShare\u201d in Teams' share picker.",
-                           share_status, ("Send Again", "shareTeams:"), bool(link and cable)))
+                           share_status, ("Send Again", "shareTeams:"), bool(link and cable),
+                           "on Windows, click \u201cAdd this device\u201d, then \u201cShare\u201d"))
     else:
         detail = ("Windows opens the meeting in its Teams app and starts sharing. You then click "
                   "twice on Windows.")
@@ -80,7 +82,8 @@ def steps(link: str, teams_running: bool, cable: bool, share: str, viewer: str) 
         result.append(Step(f"Admit {V}", "The viewer is in the meeting.", DONE))
     elif viewer == "lobby":
         result.append(Step(f"Admit {V}",
-                           f"In Teams on the Mac, admit {V} from the lobby (shown as Unverified).", CURRENT))
+                           f"In Teams on the Mac, admit {V} from the lobby (shown as Unverified).", CURRENT,
+                           hint=f"admit {V} in Teams on the Mac"))
     elif viewer in VIEWER_STARTING:
         result.append(Step(f"Admit {V}", kv.describe_state(viewer)[0], BUSY))
     elif viewer == "ended":
@@ -104,6 +107,20 @@ def steps(link: str, teams_running: bool, cable: bool, share: str, viewer: str) 
     result.append(Step("Done", "You can minimize Teams on the Mac (or leave the call there; the viewer "
                        "stays in). Assistants can now call windows_screenshot.", DONE if live else TODO))
     return highlight_first(result)
+
+
+def hint(items: List[Step], started: bool) -> str:
+    """One line for the main window next to the Windows Screen button."""
+    if items and items[-1].status == DONE:
+        return "Windows screen is live."
+    if not started:
+        return "Watch the Windows screen here via Teams; opens a step-by-step guide."
+    for status, prefix in ((ERROR, "Problem: "), (CURRENT, "Next: "), (BUSY, "")):
+        for step in items:
+            if step.status == status:
+                text = step.detail if status == BUSY else (step.hint or step.title[0].lower() + step.title[1:])
+                return prefix + text
+    return ""
 
 
 def highlight_first(items: List[Step]) -> List[Step]:

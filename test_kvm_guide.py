@@ -12,6 +12,22 @@ def statuses(**kwargs):
 
 
 class GuideTests(unittest.TestCase):
+    def test_hint_before_starting_explains_the_button(self):
+        self.assertIn("step-by-step guide", kg.hint(kg.steps(LINK, False, True, kg.SHARE_IDLE, "stopped"), False))
+
+    def test_hint_names_the_windows_clicks_after_sharing(self):
+        hint = kg.hint(kg.steps(LINK, True, True, kg.SHARE_SENT, "stopped"), True)
+        self.assertTrue(hint.startswith("Next: on Windows, click"), hint)
+        self.assertIn("Share", hint)
+
+    def test_hint_asks_to_admit_in_lobby(self):
+        self.assertEqual(kg.hint(kg.steps(LINK, True, True, kg.SHARE_SENT, "lobby"), True),
+                         f"Next: admit {kg.V} in Teams on the Mac")
+
+    def test_hint_when_live(self):
+        self.assertEqual(kg.hint(kg.steps(LINK, True, True, kg.SHARE_IDLE, "live"), True),
+                         "Windows screen is live.")
+
     def test_no_link_highlights_first_step_only(self):
         result = kg.steps("", False, True, kg.SHARE_IDLE, "stopped")
         self.assertEqual([s.status for s in result][:2], [kg.CURRENT, kg.TODO])
