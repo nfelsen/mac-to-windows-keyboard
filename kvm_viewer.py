@@ -101,25 +101,24 @@ JOIN_SCRIPT = r"""
 """
 
 
-# Injected before Teams' own scripts: refuse every mic/camera request at once, so
-# Teams never waits on a permission prompt and the viewer can never send media.
-# Inside the app (launched by macOS, no camera/mic usage declared) WebKit has no
-# navigator.mediaDevices at all, and Teams' meeting page then fails with "device
-# enumeration unsupported" and stays blank, so install an empty one.
+# Injected before Teams' own scripts. WebKit only offers navigator.mediaDevices to
+# apps that declare camera/mic usage; without it Teams' meeting page fails with
+# "device enumeration unsupported" and stays blank, so install an empty stub that
+# refuses capture. A real mediaDevices is left alone: Teams needs its normal device
+# list to set up the call (an empty list left the viewer with no share video), and
+# the web view's UI delegate already refuses every mic/camera request.
 NO_MEDIA_SCRIPT = r"""
 (function(){
-  let md = navigator.mediaDevices;
-  if (!md) {
-    md = new EventTarget();
-    md.ondevicechange = null;
-    md.getSupportedConstraints = () => ({});
-    md.__m2wStub = true;
-    Object.defineProperty(Navigator.prototype, 'mediaDevices', {get: () => md, configurable: true});
-  }
+  if (navigator.mediaDevices) return;
+  const md = new EventTarget();
   const deny = () => Promise.reject(new DOMException('Mac2Win viewer is receive-only', 'NotAllowedError'));
+  md.ondevicechange = null;
+  md.getSupportedConstraints = () => ({});
   md.getUserMedia = deny;
   md.getDisplayMedia = deny;
   md.enumerateDevices = () => Promise.resolve([]);
+  md.__m2wStub = true;
+  Object.defineProperty(Navigator.prototype, 'mediaDevices', {get: () => md, configurable: true});
 })();
 """
 

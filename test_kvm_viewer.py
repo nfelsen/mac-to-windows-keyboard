@@ -53,7 +53,7 @@ class ScriptsTest(unittest.TestCase):
     def test_no_media_script_works_without_webkit_media_devices(self):
         # Inside the app WebKit has no navigator.mediaDevices; Teams needs one to render.
         script = kv.NO_MEDIA_SCRIPT
-        self.assertIn("if (!md)", script)
+        self.assertIn("if (navigator.mediaDevices) return;", script)
         self.assertIn("defineProperty(Navigator.prototype, 'mediaDevices'", script)
         self.assertIn("md.getUserMedia = deny", script)
         self.assertIn("md.enumerateDevices = () => Promise.resolve([])", script)
