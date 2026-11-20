@@ -119,11 +119,28 @@ def join_script(name=VIEWER_NAME) -> str:
     return f"{JOIN_SCRIPT.strip()}({json.dumps(name)})"
 
 
+# Injected at document start: remembers the last few script errors and failed
+# resource loads, so the app log can say why a Teams page stayed blank.
+ERROR_LOG_SCRIPT = r"""
+(function(){
+  const errs = window.__m2wErrors = [];
+  const add = m => { errs.push(String(m).slice(0, 160)); if (errs.length > 6) errs.shift(); };
+  window.addEventListener('error', e => {
+    const t = e.target;
+    if (t && t !== window && (t.src || t.href)) add('load failed: ' + (t.src || t.href).split('?')[0]);
+    else add((e.message || 'error') + ' @' + String(e.filename || '').split('?')[0].split('/').pop() + ':' + e.lineno);
+  }, true);
+  window.addEventListener('unhandledrejection', e => add('rejection: ' + (e.reason && (e.reason.message || e.reason))));
+})();
+"""
+
 # A one-line snapshot of the page for the app log (no page text, just its shape).
 PAGE_INFO_SCRIPT = r"""
 JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: document.readyState,
   text: (document.body && document.body.innerText || '').length,
-  visibility: document.visibilityState, videos: document.querySelectorAll('video').length})
+  visibility: document.visibilityState, videos: document.querySelectorAll('video').length,
+  scripts: document.scripts.length, resources: performance.getEntriesByType('resource').length,
+  errors: window.__m2wErrors || []})
 """
 
 STALL_STATES = ("loading", "launcher")

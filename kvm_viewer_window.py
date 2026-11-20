@@ -86,6 +86,9 @@ class Viewer:
         no_media = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
             kv.NO_MEDIA_SCRIPT, WebKit.WKUserScriptInjectionTimeAtDocumentStart, False)
         config.userContentController().addUserScript_(no_media)
+        errors = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
+            kv.ERROR_LOG_SCRIPT, WebKit.WKUserScriptInjectionTimeAtDocumentStart, True)
+        config.userContentController().addUserScript_(errors)
         rect = Foundation.NSMakeRect(0, 0, *WEB_SIZE)
         self.web = WebKit.WKWebView.alloc().initWithFrame_configuration_(rect, config)
         self.web.setCustomUserAgent_(kv.USER_AGENT)
