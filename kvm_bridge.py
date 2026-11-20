@@ -167,6 +167,17 @@ def read_line(sock, limit=64 * 1024):
     return data
 
 
+def app_timeout(tap_count):
+    """Seconds to wait for kvm_app.py to type ``tap_count`` taps.
+
+    A tap is a press and a release, each acknowledged by the CH9329 (up to 1 s
+    each), plus two inter-report delays. Over a CH340 the round trips take tens
+    of milliseconds, so 50 ms per tap was too short for a ~75-character link.
+    Allow 0.5 s per tap: the timeout only exists to catch a hung app.
+    """
+    return 30 + 0.5 * tap_count
+
+
 def send_to_app(request, path=SOCKET_PATH, timeout=None):
     """Send a request to a running kvm_app.py; ``None`` if the app isn't listening."""
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -180,7 +191,8 @@ def send_to_app(request, path=SOCKET_PATH, timeout=None):
         sock.sendall(json.dumps(request).encode() + b"\n")
         line = read_line(sock)
     except socket.timeout:
-        raise BridgeError("kvm_app.py did not finish in time; check the app window.") from None
+        raise BridgeError("kvm_app.py did not report back in time. It may still be typing or may "
+                          "have finished; check the app window before retrying.") from None
     finally:
         sock.close()
     if not line:
@@ -194,8 +206,7 @@ def send_to_app(request, path=SOCKET_PATH, timeout=None):
 def execute(request, path=SOCKET_PATH, port_path=None, baud="auto"):
     """Run a request through the app if it is running, else directly. Returns a message."""
     taps = [] if request.get("op") == "status" else prepare(request)
-    # Allow ~50 ms per tap through the app, plus slack for a queued paste.
-    message = send_to_app(request, path, timeout=10 + 0.05 * len(taps))
+    message = send_to_app(request, path, timeout=app_timeout(len(taps)))
     if message is not None:
         return message
     return run_direct(request, port_path, baud)

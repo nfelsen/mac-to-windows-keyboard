@@ -282,7 +282,8 @@ def markdown(uv: str = PLACEHOLDER_UV, repo: str = PLACEHOLDER_REPO) -> str:
         "`https://teams.microsoft.com/meet/<id>?p=...` link from the event body, because "
         "`onlineMeeting.joinUrl` is usually a long `/l/meetup-join/` link over 259 characters); "
         "only Teams links are accepted. "
-        "Joining and picking the screen may still need a click on Windows. See the README's "
+        "Expect two clicks on Windows: **Add this device** (or **Join now**) to join, and **Share** "
+        "in Teams' share picker. See the README's "
         "Teams section for details and for editing the steps.",
         "",
     ]

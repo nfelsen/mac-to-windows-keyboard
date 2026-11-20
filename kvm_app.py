@@ -896,8 +896,8 @@ class Controller:
             try:
                 kt.run_actions(actions, lambda request: self.handle_bridge_request(request, teams_step=True),
                                kt.stoppable_wait(stop), progress)
-                outcome = (f"{title}: sent. Check Teams on Windows; you may need to click Join "
-                           "or pick the screen to share.", "info")
+                outcome = (f"{title}: sent. On Windows, click \u201cAdd this device\u201d (or "
+                           "\u201cJoin now\u201d) and then \u201cShare\u201d in Teams if you haven't.", "info")
             except kb.BridgeError as exc:
                 outcome = (str(exc), "info" if stop.is_set() else "error")
 

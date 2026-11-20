@@ -49,10 +49,9 @@ class StepsTest(unittest.TestCase):
         self.assertEqual(requests, [
             {"op": "keys", "combo": "win+r"},
             {"op": "type", "text": kt.desktop_link(URL), "press_enter": True},
-            {"op": "keys", "combo": "enter"},
             {"op": "keys", "combo": "ctrl+shift+e"},
         ])
-        self.assertEqual([a.seconds for a in actions if a.request is None], [kt.RUN_BOX_WAIT, 15, 8])
+        self.assertEqual([a.seconds for a in actions if a.request is None], [kt.RUN_BOX_WAIT, 30])
         for request in requests:
             kb.prepare(request)  # every request passes the bridge's own validation
 
@@ -93,7 +92,7 @@ class RunActionsTest(unittest.TestCase):
         self.assertEqual(len(done), len(self.actions))
         self.assertEqual(self.sent[0], {"op": "keys", "combo": "win+r"})
         self.assertEqual(self.sent[-1], {"op": "keys", "combo": "ctrl+shift+e"})
-        self.assertEqual(self.waits, [kt.RUN_BOX_WAIT, 15, 8])
+        self.assertEqual(self.waits, [kt.RUN_BOX_WAIT, 30])
 
     def test_stops_at_first_error(self):
         def execute(request):
@@ -134,6 +133,16 @@ class ConfigTest(unittest.TestCase):
             json.dump(data, handle)
         kt.save_url(URL, self.path)
         self.assertEqual(kt.load_config(self.path), kt.TeamsConfig(URL, ["open", "wait 20", "keys ctrl+shift+e"]))
+
+    def test_old_default_steps_are_upgraded(self):
+        # The old default pressed Enter blindly, which could pick "Transfer" in Teams' join dialog.
+        os.makedirs(os.path.dirname(self.path))
+        with open(self.path, "w") as handle:
+            json.dump({"meeting_url": SHORT, "share_steps": kt.OLD_DEFAULT_SHARE_STEPS}, handle)
+        self.assertEqual(kt.load_config(self.path).share_steps, kt.DEFAULT_SHARE_STEPS)
+        kt.save_url(URL, self.path)
+        with open(self.path) as handle:
+            self.assertEqual(json.load(handle)["share_steps"], kt.DEFAULT_SHARE_STEPS)
 
     def test_set_link_message(self):
         message = kt.set_link(" " + SHORT + " ", self.path)

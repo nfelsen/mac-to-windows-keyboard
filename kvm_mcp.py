@@ -94,10 +94,15 @@ def start_teams_screen_share() -> str:
     Only the saved meeting link is ever opened (set in the app, with kvm_teams.py --set-url,
     or with set_teams_meeting_link); this tool takes no link. Sends Win+R, the link as
     msteams://... (so the installed, signed-in Teams app opens it, not a browser), Enter,
-    then the saved steps (by default: wait, Enter to join, wait, Ctrl+Shift+E to share). Takes about 25
-    seconds. You cannot see Windows: afterwards, check a screenshot of the Teams window on
-    the Mac if you have one, otherwise ask the user whether the share started. The user may
-    need to click "Join now" or pick the screen in Teams' share picker by hand.
+    then the saved steps (by default: wait 30 seconds, then Ctrl+Shift+E to share). Takes
+    about 35 seconds. Before calling, tell the user to expect two clicks on Windows: when
+    their account is already in the meeting (on the Mac), Teams asks "How would you like to
+    join on this device?" and they must click "Add this device" during the wait (never
+    "Transfer", which would move their Mac call); otherwise they click "Join now". After
+    Ctrl+Shift+E, Teams' share picker has "Entire screen" preselected but keystrokes don't
+    press its Share button, so they click "Share". Do not send Enter or Tab to get past
+    either screen. You cannot see Windows: afterwards, check a screenshot of the Teams
+    window on the Mac if you have one, otherwise ask the user whether the share started.
     """
     return run_teams(lambda: kt.share_actions(kt.load_config()))
 

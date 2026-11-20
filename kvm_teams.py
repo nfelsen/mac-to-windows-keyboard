@@ -4,7 +4,8 @@
 Lets an assistant on the Mac read Windows output by looking at the Teams
 window on the Mac. The Windows PC only receives keystrokes through the cable:
 Win+R, the saved meeting link, Enter, then Teams shortcuts. Only the one saved
-meeting link is ever opened.
+meeting link is ever opened. The user still clicks twice on Windows: "Add this
+device" (or "Join now") to join, and "Share" in Teams' share picker.
 
     python3 kvm_teams.py --set-url "https://teams.microsoft.com/l/meetup-join/..."
     python3 kvm_teams.py --show
@@ -14,7 +15,7 @@ for example after creating a fresh meeting through Microsoft Graph.
 
 The steps live in teams.json next to the app's socket and can be edited:
     "open"          Win+R, type the meeting link, Enter
-    "wait 15"       pause (seconds, at most 60)
+    "wait 30"       pause (seconds, at most 60)
     "keys ctrl+shift+e"   press keys, like the press_keys MCP tool
 """
 
@@ -37,13 +38,19 @@ MAX_WAIT = 60.0
 MAX_STEPS = 30
 RUN_BOX_WAIT = 1.5
 TEAMS_HOST = "teams.microsoft.com"
-# Teams has no shortcut for "Join now" on the pre-join screen, so Enter is a
-# best effort. Ctrl+Shift+E (share) and Ctrl+Shift+H (leave) are documented.
-DEFAULT_SHARE_STEPS = ["open", "wait 15", "keys enter", "wait 8", "keys ctrl+shift+e"]
+# No blind Enter to join: when the user's account is already in the meeting
+# (on the Mac), Teams asks "How would you like to join on this device?" and a
+# blind Enter or Tab could pick "Transfer", moving the Mac's call to Windows.
+# The user clicks "Add this device" (or "Join now") during the wait instead.
+# Ctrl+Shift+E (share) and Ctrl+Shift+H (leave) are documented Teams shortcuts.
+DEFAULT_SHARE_STEPS = ["open", "wait 30", "keys ctrl+shift+e"]
+# Earlier default, still saved in older teams.json files; replaced on load.
+OLD_DEFAULT_SHARE_STEPS = ["open", "wait 15", "keys enter", "wait 8", "keys ctrl+shift+e"]
 LEAVE_STEPS = ["keys ctrl+shift+h"]
 VERIFY_HINT = ("You cannot see Windows. Check the result in a screenshot of the Teams window on "
-               "the Mac if you have one; otherwise ask the user. Joining or picking the screen "
-               "to share may still need a click on Windows.")
+               "the Mac if you have one; otherwise ask the user. Expect two clicks by the user on "
+               "Windows: \"Add this device\" (or \"Join now\") to join, then \"Share\" in Teams' "
+               "share picker (Entire screen is preselected, but keys don't press Share).")
 
 
 class TeamsError(kb.BridgeError):
@@ -144,7 +151,10 @@ def load_config(path: str = CONFIG_PATH) -> TeamsConfig:
         raise TeamsError(f"Can't read {path}: {exc}") from None
     if not isinstance(data, dict):
         raise TeamsError(f"{path} must contain a JSON object.")
-    return TeamsConfig(data.get("meeting_url") or "", data.get("share_steps") or list(DEFAULT_SHARE_STEPS))
+    steps = data.get("share_steps")
+    if not steps or steps == OLD_DEFAULT_SHARE_STEPS:
+        steps = list(DEFAULT_SHARE_STEPS)
+    return TeamsConfig(data.get("meeting_url") or "", steps)
 
 
 def save_url(url: str, path: str = CONFIG_PATH) -> str:
@@ -158,7 +168,8 @@ def save_url(url: str, path: str = CONFIG_PATH) -> str:
     except (OSError, ValueError):
         data = {}
     data["meeting_url"] = url
-    data.setdefault("share_steps", list(DEFAULT_SHARE_STEPS))
+    if not data.get("share_steps") or data["share_steps"] == OLD_DEFAULT_SHARE_STEPS:
+        data["share_steps"] = list(DEFAULT_SHARE_STEPS)
     kb.ensure_socket_dir(os.path.dirname(path))
     tmp = path + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)

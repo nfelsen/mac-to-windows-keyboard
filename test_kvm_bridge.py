@@ -142,6 +142,15 @@ class SocketTests(unittest.TestCase):
         # A second instance must not steal the socket.
         self.assertFalse(kb.BridgeServer(handler, self.path).bind())
 
+    def test_app_timeout_covers_slow_acknowledged_taps(self):
+        # A ~75-character Teams link timed out at the old 10 s + 50 ms/tap allowance.
+        link = "msteams://teams.microsoft.com/meet/228089269802077?p=ObsdKPH5HrTjTNdBiB"
+        request = {"op": "type", "text": link, "press_enter": True}
+        with patch.object(kb, "send_to_app", return_value="typed") as send:
+            kb.execute(request, self.path)
+        taps = len(kb.prepare(request))
+        self.assertGreaterEqual(send.call_args.kwargs["timeout"], 30 + 0.5 * taps)
+
     def test_invalid_request_not_forwarded(self):
         with patch.object(kb, "send_to_app") as send:
             with self.assertRaises(kb.BridgeError):
