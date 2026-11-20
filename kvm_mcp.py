@@ -66,13 +66,31 @@ def run_teams(actions_for):
     return f"Sent: {' -> '.join(done)}. {kt.VERIFY_HINT}"
 
 
+@mcp.tool(annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False))
+def set_teams_meeting_link(url: str) -> str:
+    """Save the Microsoft Teams meeting link that start_teams_screen_share opens on Windows.
+    Sends nothing to Windows.
+
+    Use a meeting the user owns, for example a one-time meeting you just created for them
+    through Microsoft Graph: POST /me/events with isOnlineMeeting true, onlineMeetingProvider
+    "teamsForBusiness", showAs "free" (so their calendar stays free), isReminderOn false, and
+    no attendees; then pass its onlineMeeting.joinUrl. Only https://teams.microsoft.com/... or msteams: links of at most 259
+    characters are accepted (the Windows Run box limit); prefer the short
+    https://teams.microsoft.com/meet/... join link over long /l/meetup-join/ links.
+    """
+    try:
+        return kt.set_link(url)
+    except (kb.BridgeError, OSError) as exc:
+        raise ToolError(str(exc)) from None
+
+
 @mcp.tool(annotations=SENDS_KEYS)
 def start_teams_screen_share() -> str:
     """Make the Windows PC join the user's saved Microsoft Teams meeting and share its screen,
     so the Windows screen can be seen in the Teams window on the Mac.
 
-    Only the meeting link saved by the user (in the app or with kvm_teams.py --set-url) is
-    ever opened; it cannot be changed here. Sends Win+R, the link, Enter, then the saved
+    Only the saved meeting link is ever opened (set in the app, with kvm_teams.py --set-url,
+    or with set_teams_meeting_link); this tool takes no link. Sends Win+R, the link, Enter, then the saved
     steps (by default: wait, Enter to join, wait, Ctrl+Shift+E to share). Takes about 25
     seconds. You cannot see Windows: afterwards, check a screenshot of the Teams window on
     the Mac if you have one, otherwise ask the user whether the share started. The user may

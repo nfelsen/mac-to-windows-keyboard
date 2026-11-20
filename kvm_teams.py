@@ -9,6 +9,9 @@ meeting link is ever opened.
     python3 kvm_teams.py --set-url "https://teams.microsoft.com/l/meetup-join/..."
     python3 kvm_teams.py --show
 
+An assistant can also save a link with the set_teams_meeting_link MCP tool,
+for example after creating a fresh meeting through Microsoft Graph.
+
 The steps live in teams.json next to the app's socket and can be edited:
     "open"          Win+R, type the meeting link, Enter
     "wait 15"       pause (seconds, at most 60)
@@ -162,6 +165,13 @@ def save_url(url: str, path: str = CONFIG_PATH) -> str:
         handle.write("\n")
     os.replace(tmp, path)
     return url
+
+
+def set_link(url: str, path: str = CONFIG_PATH) -> str:
+    """Save a new meeting link (MCP set_teams_meeting_link); sends nothing to Windows."""
+    url = save_url(url, path)
+    return (f"Saved the Teams meeting link {url}. Nothing was sent to Windows; "
+            "start_teams_screen_share will open this meeting.")
 
 
 def share_actions(config: TeamsConfig) -> List[Action]:

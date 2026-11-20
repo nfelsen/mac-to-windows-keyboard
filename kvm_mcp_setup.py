@@ -274,7 +274,11 @@ def markdown(uv: str = PLACEHOLDER_UV, repo: str = PLACEHOLDER_REPO) -> str:
         "Teams meeting link once in the app (**Teams → Set Meeting Link…**) and join that meeting "
         "on the Mac. Then ask the assistant to run `start_teams_screen_share`. It makes Windows open "
         "only that saved link, join, and share its screen; `stop_teams_screen_share` leaves the "
-        "call. Joining and picking the screen may still need a click on Windows. See the README's "
+        "call. An assistant can also save a link itself with `set_teams_meeting_link` (for example "
+        "after creating a one-time meeting through Microsoft Graph with `POST /me/events`, "
+        "`isOnlineMeeting: true`, `onlineMeetingProvider: \"teamsForBusiness\"`, "
+        "`showAs: \"free\"`, `isReminderOn: false` and no attendees); only Teams links are accepted. "
+        "Joining and picking the screen may still need a click on Windows. See the README's "
         "Teams section for details and for editing the steps.",
         "",
     ]

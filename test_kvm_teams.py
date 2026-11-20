@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import os
 import stat
@@ -125,6 +126,15 @@ class ConfigTest(unittest.TestCase):
         kt.save_url(URL, self.path)
         self.assertEqual(kt.load_config(self.path), kt.TeamsConfig(URL, ["open", "wait 20", "keys ctrl+shift+e"]))
 
+    def test_set_link_message(self):
+        message = kt.set_link(" " + SHORT + " ", self.path)
+        self.assertIn(SHORT, message)
+        self.assertIn("Nothing was sent", message)
+        self.assertEqual(kt.load_config(self.path).meeting_url, SHORT)
+        with self.assertRaises(kt.TeamsError):
+            kt.set_link("https://teams.microsoft.com/meet/" + "1" * 300, self.path)
+        self.assertEqual(kt.load_config(self.path).meeting_url, SHORT)
+
     def test_invalid_link_is_not_saved(self):
         with self.assertRaises(kt.TeamsError):
             kt.save_url("https://example.com/meeting", self.path)
@@ -136,6 +146,17 @@ class ConfigTest(unittest.TestCase):
             handle.write("[1]")
         with self.assertRaises(kt.TeamsError):
             kt.load_config(self.path)
+
+
+@unittest.skipUnless(importlib.util.find_spec("mcp"), "needs the mcp package (uv run)")
+class McpToolsTest(unittest.TestCase):
+    def test_only_set_link_takes_a_url(self):
+        import asyncio
+        import kvm_mcp
+        tools = {t.name: t for t in asyncio.run(kvm_mcp.mcp.list_tools())}
+        self.assertEqual(set(tools["set_teams_meeting_link"].input_schema["properties"]), {"url"})
+        self.assertEqual(tools["start_teams_screen_share"].input_schema.get("properties", {}), {})
+        self.assertTrue(tools["start_teams_screen_share"].annotations.destructive_hint)
 
 
 if __name__ == "__main__":
