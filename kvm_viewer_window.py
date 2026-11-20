@@ -11,7 +11,6 @@ from PyObjCTools import AppHelper
 import kvm_viewer as kv
 
 TICK = 1.5  # seconds between join steps / preview refreshes
-OFFSCREEN = (-20000, -20000)
 WEB_SIZE = (1280, 800)
 CAPTURE_TIMEOUT = 15
 
@@ -94,8 +93,9 @@ class Viewer:
         self.web.setCustomUserAgent_(kv.USER_AGENT)
         self.web.setUIDelegate_(self.delegate)
         self.web.setNavigationDelegate_(self.delegate)
-        # Off-screen but ordered in, so WebKit keeps decoding video. It must be a titled
-        # window: WebKit throttles a borderless off-screen one and Teams never connects.
+        # Invisible but on screen: fully transparent, click-through, behind normal
+        # windows. WebKit marks an off-screen page hidden (Teams may stop its video) and
+        # throttles a borderless window, and macOS pulls a titled one back on screen anyway.
         self.web_window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, AppKit.NSWindowStyleMaskTitled, AppKit.NSBackingStoreBuffered, False)
         self.web_window.setReleasedWhenClosed_(False)
@@ -103,8 +103,11 @@ class Viewer:
         self.web_window.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorTransient | AppKit.NSWindowCollectionBehaviorIgnoresCycle)
         self.web_window.setContentView_(self.web)
-        self.web_window.setFrameOrigin_(OFFSCREEN)
-        self.web_window.orderFront_(None)
+        self.web_window.setAlphaValue_(0.0)
+        self.web_window.setIgnoresMouseEvents_(True)
+        self.web_window.setLevel_(AppKit.NSNormalWindowLevel - 1)
+        self.web_window.setFrameOrigin_((0, 0))
+        self.web_window.orderBack_(None)
         self.url = url
         self.stall = kv.StallWatch()
         log(f"starting; window at {tuple(self.web_window.frame().origin)}")
