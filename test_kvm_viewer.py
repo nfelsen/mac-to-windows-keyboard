@@ -50,6 +50,14 @@ class ScriptsTest(unittest.TestCase):
                  for line in kv.JOIN_SCRIPT.splitlines() if "= find(" in line}
         self.assertEqual(found, clicks)
 
+    def test_no_media_script_works_without_webkit_media_devices(self):
+        # Inside the app WebKit has no navigator.mediaDevices; Teams needs one to render.
+        script = kv.NO_MEDIA_SCRIPT
+        self.assertIn("if (navigator.mediaDevices) return;", script)
+        self.assertIn("defineProperty(Navigator.prototype, 'mediaDevices'", script)
+        self.assertIn("md.getUserMedia = deny", script)
+        self.assertIn("md.enumerateDevices = () => Promise.resolve([])", script)
+
     def test_every_script_state_has_a_message(self):
         for state in ("loading", "launcher", "prejoin", "joining", "lobby", "in-meeting", "ended"):
             self.assertIn(f"'{state}'", kv.JOIN_SCRIPT)

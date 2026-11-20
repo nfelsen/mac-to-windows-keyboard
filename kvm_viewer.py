@@ -101,15 +101,52 @@ JOIN_SCRIPT = r"""
 """
 
 
+# Injected before Teams' own scripts. WebKit only offers navigator.mediaDevices to
+# apps that declare camera/mic usage; without it Teams' meeting page fails with
+# "device enumeration unsupported" and stays blank, so install an empty stub that
+# refuses capture. A real mediaDevices is left alone: Teams needs its normal device
+# list to set up the call (an empty list left the viewer with no share video), and
+# the web view's UI delegate already refuses every mic/camera request.
+NO_MEDIA_SCRIPT = r"""
+(function(){
+  if (navigator.mediaDevices) return;
+  const md = new EventTarget();
+  const deny = () => Promise.reject(new DOMException('Mac2Win viewer is receive-only', 'NotAllowedError'));
+  md.ondevicechange = null;
+  md.getSupportedConstraints = () => ({});
+  md.getUserMedia = deny;
+  md.getDisplayMedia = deny;
+  md.enumerateDevices = () => Promise.resolve([]);
+  md.__m2wStub = true;
+  Object.defineProperty(Navigator.prototype, 'mediaDevices', {get: () => md, configurable: true});
+})();
+"""
+
+
 def join_script(name=VIEWER_NAME) -> str:
     return f"{JOIN_SCRIPT.strip()}({json.dumps(name)})"
 
+
+# Injected at document start: remembers the last few script errors and failed
+# resource loads, so the app log can say why a Teams page stayed blank.
+ERROR_LOG_SCRIPT = r"""
+(function(){
+  const errs = window.__m2wErrors = [];
+  const add = m => { errs.push(String(m).slice(0, 160)); if (errs.length > 6) errs.shift(); };
+  window.addEventListener('error', e => {
+    const t = e.target;
+    if (t && t !== window && (t.src || t.href)) add('load failed: ' + (t.src || t.href).split('?')[0]);
+    else add((e.message || 'error') + ' @' + String(e.filename || '').split('?')[0].split('/').pop() + ':' + e.lineno);
+  }, true);
+  window.addEventListener('unhandledrejection', e => add('rejection: ' + (e.reason && (e.reason.message || e.reason))));
+})();
+"""
 
 # A one-line snapshot of the page for the app log: its shape and button labels, no page text.
 PAGE_INFO_SCRIPT = r"""
 JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: document.readyState,
   text: (document.body && document.body.innerText || '').length,
-  visibility: document.visibilityState, media: typeof navigator.mediaDevices, rtc: typeof RTCPeerConnection, videos: document.querySelectorAll('video').length,
+  visibility: document.visibilityState, media: navigator.mediaDevices && navigator.mediaDevices.__m2wStub ? 'stub' : 'webkit', rtc: typeof RTCPeerConnection, videos: document.querySelectorAll('video').length,
   buttons: [...document.querySelectorAll('button,[role=button]')].map(b => (b.innerText || b.getAttribute('aria-label') || '').trim().slice(0, 40)).filter(Boolean).slice(0, 12),
   scripts: document.scripts.length, resources: performance.getEntriesByType('resource').length,
   errors: window.__m2wErrors || []})
