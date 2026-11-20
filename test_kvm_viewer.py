@@ -57,6 +57,30 @@ class ScriptsTest(unittest.TestCase):
         self.assertIn(kv.VIEWER_NAME, kv.describe_state("lobby")[0])
 
 
+class StallWatchTest(unittest.TestCase):
+    def test_reloads_after_the_limit_then_gives_up(self):
+        watch = kv.StallWatch(limit=30, max_reloads=2)
+        self.assertFalse(watch.update("loading", 0))
+        self.assertFalse(watch.update("launcher", 29))
+        self.assertTrue(watch.update("loading", 30))
+        self.assertFalse(watch.update("loading", 59))
+        self.assertTrue(watch.update("loading", 60))
+        self.assertFalse(watch.update("loading", 1000))
+        self.assertEqual(watch.reloads, 2)
+
+    def test_progress_resets_the_clock(self):
+        watch = kv.StallWatch(limit=30)
+        watch.update("loading", 0)
+        self.assertFalse(watch.update("prejoin", 20))
+        self.assertFalse(watch.update("loading", 40))
+        self.assertFalse(watch.update("loading", 65))
+        self.assertTrue(watch.update("loading", 70))
+
+    def test_lobby_never_reloads(self):
+        watch = kv.StallWatch(limit=30)
+        self.assertFalse(any(watch.update("lobby", t) for t in range(0, 600, 10)))
+
+
 class ParseFrameTest(unittest.TestCase):
     def test_good_frame(self):
         frame = kv.parse_frame(frame_result())

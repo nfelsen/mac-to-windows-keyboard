@@ -1,5 +1,8 @@
 """Hidden Teams web view and the "Windows Screen" preview window (Cocoa side of kvm_viewer)."""
 
+import sys
+import time
+
 import AppKit
 import Foundation
 import WebKit
@@ -13,8 +16,16 @@ WEB_SIZE = (1280, 800)
 CAPTURE_TIMEOUT = 15
 
 
+def log(message):
+    """One line in the app log (~/Library/Logs/Mac2Win KVM.log)."""
+    print(f"{time.strftime('%H:%M:%S')} viewer: {message}", file=sys.stderr, flush=True)
+
+
 class WebDelegate(AppKit.NSObject):
-    """Denies mic and camera; keeps Teams' pop-ups in the same hidden view."""
+    """Denies mic and camera, keeps Teams' pop-ups in the same hidden view, and logs
+    navigation failures. ``viewer`` is set by Viewer (WKWebView only holds a weak reference)."""
+
+    viewer = None
 
     def webView_requestMediaCapturePermissionForOrigin_initiatedByFrame_type_decisionHandler_(
             self, web_view, origin, frame, kind, handler):
@@ -26,6 +37,23 @@ class WebDelegate(AppKit.NSObject):
         if url is not None and (url.host() or "").lower() == "teams.microsoft.com":
             web_view.loadRequest_(action.request())
         return None
+
+    # WKNavigationDelegate
+
+    def webView_didFinishNavigation_(self, web_view, navigation):
+        url = web_view.URL()
+        log(f"loaded {url.host() if url else None}{url.path() if url else ''}")
+
+    def webView_didFailNavigation_withError_(self, web_view, navigation, error):
+        log(f"navigation failed: {error.localizedDescription()} ({error.domain()} {error.code()})")
+
+    def webView_didFailProvisionalNavigation_withError_(self, web_view, navigation, error):
+        log(f"page load failed: {error.localizedDescription()} ({error.domain()} {error.code()})")
+
+    def webViewWebContentProcessDidTerminate_(self, web_view):
+        log("the web content process quit; reloading")
+        if self.viewer is not None:
+            self.viewer.reload("web content process quit")
 
 
 class Viewer:
@@ -41,6 +69,9 @@ class Viewer:
         self.running = False
         self.tick_pending = False
         self.delegate = WebDelegate.alloc().init()
+        self.delegate.viewer = self
+        self.url = None
+        self.stall = kv.StallWatch()
 
     # ----- lifecycle -----
 
@@ -59,6 +90,7 @@ class Viewer:
         self.web = WebKit.WKWebView.alloc().initWithFrame_configuration_(rect, config)
         self.web.setCustomUserAgent_(kv.USER_AGENT)
         self.web.setUIDelegate_(self.delegate)
+        self.web.setNavigationDelegate_(self.delegate)
         # Off-screen but ordered in, so WebKit keeps decoding video. It must be a titled
         # window: WebKit throttles a borderless off-screen one and Teams never connects.
         self.web_window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -70,14 +102,27 @@ class Viewer:
         self.web_window.setContentView_(self.web)
         self.web_window.setFrameOrigin_(OFFSCREEN)
         self.web_window.orderFront_(None)
-        self.web.loadRequest_(Foundation.NSURLRequest.requestWithURL_(Foundation.NSURL.URLWithString_(url)))
+        self.url = url
+        self.stall = kv.StallWatch()
+        log(f"starting; window at {tuple(self.web_window.frame().origin)}")
+        self.load()
         self.running = True
         self.set_state("loading")
         self.schedule()
 
+    def load(self):
+        self.web.loadRequest_(Foundation.NSURLRequest.requestWithURL_(Foundation.NSURL.URLWithString_(self.url)))
+
+    def reload(self, reason):
+        if not self.running:
+            return
+        log(f"reloading the meeting page ({reason})")
+        self.load()
+
     def stop(self, state="stopped"):
         if not self.running:
             return
+        log(f"stopping ({state})")
         self.running = False
         self.web.stopLoading()
         self.web.loadHTMLString_baseURL_("", None)  # leaves the call
@@ -94,10 +139,17 @@ class Viewer:
         if state == self.state:
             return
         self.state = state
+        self.log_page(state)
         message, level = kv.describe_state(state)
         if self.status is not None:
             self.status.setStringValue_(message)
         self.on_change(message, level)
+
+    def log_page(self, state):
+        if self.web is None:
+            return log(state)
+        self.web.evaluateJavaScript_completionHandler_(
+            kv.PAGE_INFO_SCRIPT, lambda info, error: log(f"{state}: {info or error}"))
 
     def in_meeting(self):
         return self.state in ("in-meeting", "live")
@@ -124,6 +176,9 @@ class Viewer:
         if state == "ended":
             return self.stop("ended")
         self.set_state(state)
+        if self.stall.update(state, time.monotonic()):
+            self.log_page(f"stuck {state} for {self.stall.limit}s")
+            self.reload(f"attempt {self.stall.reloads} of {self.stall.max_reloads}")
         if self.in_meeting() and self.preview_visible():
             self.capture(self.show_frame)
         else:

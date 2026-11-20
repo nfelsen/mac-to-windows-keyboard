@@ -119,6 +119,41 @@ def join_script(name=VIEWER_NAME) -> str:
     return f"{JOIN_SCRIPT.strip()}({json.dumps(name)})"
 
 
+# A one-line snapshot of the page for the app log (no page text, just its shape).
+PAGE_INFO_SCRIPT = r"""
+JSON.stringify({url: location.href.split('?')[0], title: document.title, ready: document.readyState,
+  text: (document.body && document.body.innerText || '').length,
+  visibility: document.visibilityState, videos: document.querySelectorAll('video').length})
+"""
+
+STALL_STATES = ("loading", "launcher")
+STALL_SECONDS = 30
+MAX_RELOADS = 3
+
+
+class StallWatch:
+    """Decides when a viewer stuck on "Opening the Teams meeting…" should reload the page."""
+
+    def __init__(self, limit=STALL_SECONDS, max_reloads=MAX_RELOADS):
+        self.limit, self.max_reloads = limit, max_reloads
+        self.since = None
+        self.reloads = 0
+
+    def update(self, state, now) -> bool:
+        """Record ``state`` at time ``now``; True means reload the page now."""
+        if state not in STALL_STATES:
+            self.since = None
+            return False
+        if self.since is None:
+            self.since = now
+            return False
+        if now - self.since < self.limit or self.reloads >= self.max_reloads:
+            return False
+        self.reloads += 1
+        self.since = now
+        return True
+
+
 # Copies the current frame of the screen-share video into a JPEG data URL.
 # Prefers videos Teams labels as shared content; otherwise the largest video.
 FRAME_SCRIPT = r"""
