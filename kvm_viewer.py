@@ -190,7 +190,9 @@ class StallWatch:
 FRAME_SCRIPT = r"""
 (function(){
   const vids = [...document.querySelectorAll('video')].filter(v => v.videoWidth > 0 && v.readyState >= 2);
-  if (!vids.length) return JSON.stringify({error: 'no-video'});
+  if (!vids.length) return JSON.stringify({error: 'no-video', visibility: document.visibilityState,
+    videos: [...document.querySelectorAll('video')].map(v => [v.videoWidth, v.videoHeight, v.readyState, !!v.srcObject, v.paused]),
+    canvases: [...document.querySelectorAll('canvas')].map(c => [c.width, c.height])});
   const shared = v => {
     for (let e = v, i = 0; e && i < 15; e = e.parentElement, i++) {
       const a = [e.getAttribute && e.getAttribute('aria-label'), e.getAttribute && e.getAttribute('data-tid'),

@@ -90,6 +90,10 @@ class Viewer:
         config.userContentController().addUserScript_(errors)
         rect = Foundation.NSMakeRect(0, 0, *WEB_SIZE)
         self.web = WebKit.WKWebView.alloc().initWithFrame_configuration_(rect, config)
+        # The window is transparent, which macOS reports as occluded; WebKit would then
+        # throttle the page and Teams stops delivering the share video. Opt out (SPI).
+        if self.web.respondsToSelector_("_setWindowOcclusionDetectionEnabled:"):
+            self.web._setWindowOcclusionDetectionEnabled_(False)
         self.web.setCustomUserAgent_(kv.USER_AGENT)
         self.web.setUIDelegate_(self.delegate)
         self.web.setNavigationDelegate_(self.delegate)
@@ -213,6 +217,9 @@ class Viewer:
                     raise kv.ViewerError(f"The Teams viewer failed to read the screen: {error}")
                 frame = kv.parse_frame(result)
             except kv.ViewerError as exc:
+                if isinstance(result, str) and "no-video" in result:
+                    occluded = not (self.web_window.occlusionState() & AppKit.NSWindowOcclusionStateVisible)
+                    log(f"no video: {result[:400]} occluded={occluded}")
                 return callback(None, str(exc))
             callback(frame, None)
         self.web.evaluateJavaScript_completionHandler_(kv.FRAME_SCRIPT, done)
