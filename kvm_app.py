@@ -244,6 +244,7 @@ class GuideRow:
         self.spinner.setStyle_(AppKit.NSProgressIndicatorStyleSpinning)
         self.spinner.setControlSize_(AppKit.NSControlSizeSmall)
         self.spinner.setDisplayedWhenStopped_(False)
+        self.spinner.widthAnchor().constraintEqualToConstant_(20).setActive_(True)
         self.title = label("", 13, AppKit.NSFontWeightSemibold)
         self.detail = label("", 12, text_color="secondaryLabelColor", wrap=True)
         self.detail.setSelectable_(True)
@@ -251,8 +252,10 @@ class GuideRow:
         texts = stack([self.title, self.detail], vertical=True, spacing=2,
                       alignment=AppKit.NSLayoutAttributeLeading)
         texts.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        spacer = AppKit.NSView.alloc().init()
+        spacer.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
         self.button = controller.control_button("", "showGuide:")
-        row = stack([self.icon, self.spinner, texts, self.button], spacing=10,
+        row = stack([self.icon, self.spinner, texts, spacer, self.button], spacing=10,
                     alignment=AppKit.NSLayoutAttributeCenterY)
         self.view = AppKit.NSView.alloc().init()
         self.view.setWantsLayer_(True)
