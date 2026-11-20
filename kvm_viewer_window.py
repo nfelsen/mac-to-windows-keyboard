@@ -71,6 +71,9 @@ class Viewer:
         self.delegate.viewer = self
         self.url = None
         self.stall = kv.StallWatch()
+        # Set by the app: whether something besides the preview wants frames, and who gets them.
+        self.want_frames = lambda: False
+        self.on_frame = None
 
     # ----- lifecycle -----
 
@@ -189,7 +192,7 @@ class Viewer:
         if self.stall.update(state, time.monotonic()):
             self.log_page(f"stuck {state} for {self.stall.limit}s", kv.STUCK_INFO_SCRIPT)
             self.reload(f"attempt {self.stall.reloads} of {self.stall.max_reloads}")
-        if self.in_meeting() and self.preview_visible():
+        if self.in_meeting() and (self.preview_visible() or self.want_frames()):
             self.capture(self.show_frame)
         else:
             self.schedule()
@@ -199,7 +202,10 @@ class Viewer:
             self.set_state("live")
             image = AppKit.NSImage.alloc().initWithData_(Foundation.NSData.dataWithBytes_length_(
                 frame.data, len(frame.data)))
-            self.image_view.setImage_(image)
+            if self.image_view is not None:
+                self.image_view.setImage_(image)
+            if self.on_frame is not None:
+                self.on_frame(image)
         elif self.state == "live":
             self.set_state("in-meeting")
         self.schedule()

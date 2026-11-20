@@ -21,6 +21,7 @@ from PyObjCTools import AppHelper
 import kvm_bridge as kb
 import kvm_panel as kp
 import kvm_core as kc
+import kvm_guide as kg
 import kvm_mcp_setup as ms
 import kvm_teams as kt
 import kvm_viewer as kv
@@ -57,6 +58,11 @@ LEVEL_COLORS = {"ok": "systemGreenColor", "warn": "systemOrangeColor", "error": 
                 "idle": "secondaryLabelColor"}
 CARD_RADIUS = 12
 GLOW = 8  # room around the capture card for its glow
+GUIDE_ICONS = {kg.DONE: ("checkmark.circle.fill", "systemGreenColor"),
+               kg.CURRENT: ("hand.point.right.fill", "controlAccentColor"),
+               kg.TODO: ("circle", "tertiaryLabelColor"),
+               kg.ERROR: ("exclamationmark.triangle.fill", "systemRedColor")}
+TEAMS_BUNDLES = {"com.microsoft.teams2", "com.microsoft.teams"}
 
 
 def color(name):
@@ -227,6 +233,107 @@ class CaptureView(AppKit.NSView):
         self.setNeedsDisplay_(True)
 
 
+class GuideRow:
+    """One step of the setup guide: status icon (or spinner), title, detail, button."""
+
+    def __init__(self, controller):
+        self.icon = AppKit.NSImageView.alloc().init()
+        for anchor in (self.icon.widthAnchor(), self.icon.heightAnchor()):
+            anchor.constraintEqualToConstant_(20).setActive_(True)
+        self.spinner = AppKit.NSProgressIndicator.alloc().init()
+        self.spinner.setStyle_(AppKit.NSProgressIndicatorStyleSpinning)
+        self.spinner.setControlSize_(AppKit.NSControlSizeSmall)
+        self.spinner.setDisplayedWhenStopped_(False)
+        self.title = label("", 13, AppKit.NSFontWeightSemibold)
+        self.detail = label("", 12, text_color="secondaryLabelColor", wrap=True)
+        self.detail.setSelectable_(True)
+        self.detail.setPreferredMaxLayoutWidth_(380)
+        texts = stack([self.title, self.detail], vertical=True, spacing=2,
+                      alignment=AppKit.NSLayoutAttributeLeading)
+        texts.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
+        self.button = controller.control_button("", "showGuide:")
+        row = stack([self.icon, self.spinner, texts, self.button], spacing=10,
+                    alignment=AppKit.NSLayoutAttributeCenterY)
+        self.view = AppKit.NSView.alloc().init()
+        self.view.setWantsLayer_(True)
+        self.view.layer().setCornerRadius_(8)
+        self.view.addSubview_(row)
+        pin(row, self.view, (8, 10, 8, 10))
+
+    def update(self, number, step):
+        busy = step.status == kg.BUSY
+        self.title.setStringValue_(f"{number}. {step.title}")
+        self.title.setTextColor_(color("secondaryLabelColor" if step.status == kg.TODO else "labelColor"))
+        self.detail.setStringValue_(step.detail)
+        if not busy:
+            name, tint = GUIDE_ICONS[step.status]
+            self.icon.setImage_(symbol(name, 16, AppKit.NSFontWeightSemibold))
+            self.icon.setContentTintColor_(color(tint))
+        self.icon.setHidden_(busy)
+        self.spinner.setHidden_(not busy)
+        (self.spinner.startAnimation_ if busy else self.spinner.stopAnimation_)(None)
+        self.button.setHidden_(step.button is None)
+        if step.button:
+            self.button.setTitle_(step.button[0])
+            self.button.setAction_(step.button[1])
+            self.button.setEnabled_(step.enabled)
+        fill = (AppKit.NSColor.controlAccentColor().colorWithAlphaComponent_(0.16)
+                if step.status == kg.CURRENT else AppKit.NSColor.clearColor())
+        self.view.layer().setBackgroundColor_(fill.CGColor())
+
+
+class GuideWindow:
+    """\u201cWindows Screen Setup\u201d: the share + viewer steps with live status."""
+
+    def __init__(self, controller):
+        window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
+            ((0, 0), (580, 600)),
+            AppKit.NSWindowStyleMaskTitled | AppKit.NSWindowStyleMaskClosable
+            | AppKit.NSWindowStyleMaskMiniaturizable | AppKit.NSWindowStyleMaskFullSizeContentView,
+            AppKit.NSBackingStoreBuffered, False)
+        window.setTitle_("Windows Screen Setup")
+        window.setTitlebarAppearsTransparent_(True)
+        window.setReleasedWhenClosed_(False)
+        window.setFrameAutosaveName_("WindowsScreenSetup")
+        background = AppKit.NSVisualEffectView.alloc().init()
+        background.setMaterial_(AppKit.NSVisualEffectMaterialWindowBackground)
+        window.setContentView_(background)
+        heading = label("See the Windows screen on this Mac", 17, AppKit.NSFontWeightBold)
+        intro = label("Teams carries the Windows screen to this Mac. A few steps need a click from you; "
+                      "the highlighted one is next. Statuses update by themselves.", 12,
+                      text_color="secondaryLabelColor", wrap=True)
+        intro.setPreferredMaxLayoutWidth_(540)
+        self.rows = [GuideRow(controller) for _ in range(6)]
+        self.thumb = AppKit.NSImageView.alloc().init()
+        self.thumb.setImageScaling_(AppKit.NSImageScaleProportionallyUpOrDown)
+        self.thumb.heightAnchor().constraintEqualToConstant_(170).setActive_(True)
+        self.thumb.setHidden_(True)
+        views = [heading, intro] + [row.view for row in self.rows]
+        views.insert(views.index(self.rows[4].view) + 1, self.thumb)
+        main = stack(views, vertical=True, spacing=4, alignment=AppKit.NSLayoutAttributeLeading)
+        main.setCustomSpacing_afterView_(10, intro)
+        background.addSubview_(main)
+        pin(main, background, (40, 20, 20, 20))
+        for view in views:
+            match_width(view, main)
+        self.window = window
+        self.live = False
+
+    def update(self, steps, live):
+        for number, (row, step) in enumerate(zip(self.rows, steps), 1):
+            row.update(number, step)
+        self.live = live
+        self.thumb.setHidden_(not (live and self.thumb.image() is not None))
+        self.window.contentView().layoutSubtreeIfNeeded()
+        self.window.setContentSize_((580, self.window.contentView().fittingSize().height))
+
+    def set_frame(self, image):
+        self.thumb.setImage_(image)
+        if self.live and self.thumb.isHidden():
+            self.thumb.setHidden_(False)
+            self.window.setContentSize_((580, self.window.contentView().fittingSize().height))
+
+
 class Controller:
     """Owns the cable, the window, and capture state. Runs on the main thread."""
 
@@ -241,6 +348,9 @@ class Controller:
         self.typing_finish = None
         self.bridge = None
         self.viewer = None  # kvm_viewer_window.Viewer, created on first use
+        self.guide = None  # GuideWindow, created on first use
+        self.guide_ticking = False
+        self.share_status = kg.SHARE_IDLE
         self.panel = kp.Panel()
         self.popover = None
         self.setup_window = None
@@ -618,7 +728,9 @@ class Controller:
         teams_item = AppKit.NSMenuItem.alloc().init()
         menubar.addItem_(teams_item)
         teams = AppKit.NSMenu.alloc().initWithTitle_("Teams")
-        for title, action in (("Share Windows Screen to Teams", "shareTeams:"),
+        for title, action in (("Windows Screen Setup Guide\u2026", "showGuide:"),
+                              (None, None),
+                              ("Share Windows Screen to Teams", "shareTeams:"),
                               ("Leave Teams Call on Windows", "leaveTeams:"),
                               (None, None),
                               ("Show Windows Screen", "watchWindows:"),
@@ -654,6 +766,7 @@ class Controller:
         self.teams_button.setEnabled_(bool(self.keyboard) and not busy)
         self.progress.setHidden_(not busy)
         self.stop_button.setHidden_(not busy)
+        self.refresh_guide()
 
     # ----- cable -----
 
@@ -876,10 +989,13 @@ class Controller:
         if self.viewer is None:
             import kvm_viewer_window as kvw  # WebKit loads only when the viewer is used
             self.viewer = kvw.Viewer(self.viewer_changed)
+            self.viewer.want_frames = self.guide_visible
+            self.viewer.on_frame = self.guide_frame
         return self.viewer
 
     def viewer_changed(self, message, level):
         self.set_notice(f"Windows Screen: {message}", "error" if level == "error" else "info")
+        self.refresh_guide()
 
     def start_viewer(self):
         """Join the saved meeting as the hidden viewer; returns an error message or None."""
@@ -899,6 +1015,14 @@ class Controller:
         if error:
             return self.set_notice(error, "error")
         self.viewer.show_preview(self.delegate)
+        if self.viewer.state != "live":
+            self.show_guide()
+
+    def start_viewer_guided(self):
+        error = self.start_viewer()
+        if error:
+            self.set_notice(error, "error")
+        self.refresh_guide()
 
     def stop_viewer(self):
         if self.viewer:
@@ -941,16 +1065,26 @@ class Controller:
             actions = kt.share_actions(config)
         except kb.BridgeError as exc:
             return self.set_notice(str(exc), "error")
-        self.run_teams(actions, "Sharing Windows screen to Teams")
+        self.show_guide()
+        if self.run_teams(actions, "Sharing Windows screen to Teams", self.share_done):
+            self.share_status = kg.SHARE_SENDING
+            self.refresh_guide()
+
+    def share_done(self, ok):
+        self.share_status = kg.SHARE_SENT if ok else kg.SHARE_FAILED
 
     def leave_teams(self):
-        self.run_teams(kt.leave_actions(), "Leaving the Teams call")
+        self.run_teams(kt.leave_actions(), "Leaving the Teams call",
+                       lambda ok: setattr(self, "share_status", kg.SHARE_IDLE))
 
-    def run_teams(self, actions, title):
+    def run_teams(self, actions, title, on_done=None):
+        """Send a Teams key sequence on a worker thread; returns True if it started."""
         if self.typing or self.teams_stop:
-            return self.set_notice("Already typing; wait for it to finish or press Esc.", "error")
+            self.set_notice("Already typing; wait for it to finish or press Esc.", "error")
+            return False
         if not self.keyboard:
-            return self.set_notice("Cable not connected; nothing was sent.", "error")
+            self.set_notice("Cable not connected; nothing was sent.", "error")
+            return False
         self.stop_capture()
         stop = self.teams_stop = threading.Event()
         self.progress.setDoubleValue_(0)
@@ -966,17 +1100,72 @@ class Controller:
             try:
                 kt.run_actions(actions, lambda request: self.handle_bridge_request(request, teams_step=True),
                                kt.stoppable_wait(stop), progress)
+                ok = True
                 outcome = (f"{title}: sent. On Windows, click \u201cAdd this device\u201d (or "
                            "\u201cJoin now\u201d) and then \u201cShare\u201d in Teams if you haven't.", "info")
             except kb.BridgeError as exc:
+                ok = False
                 outcome = (str(exc), "info" if stop.is_set() else "error")
 
             def done():
                 self.teams_stop = None
+                if on_done:
+                    on_done(ok)
                 self.set_notice(*outcome)
                 self.refresh()
             AppHelper.callAfter(done)
         threading.Thread(target=worker, daemon=True).start()
+        return True
+
+    # ----- setup guide -----
+
+    def show_guide(self):
+        if self.guide is None:
+            self.guide = GuideWindow(self)
+            self.guide.window.center()
+        self.guide.window.makeKeyAndOrderFront_(None)
+        self.refresh_guide()
+        if self.viewer:
+            self.viewer.schedule()  # keeps the thumbnail coming
+        if not self.guide_ticking:
+            self.guide_ticking = True
+            AppHelper.callLater(2, self.guide_tick)
+
+    def guide_visible(self):
+        return self.guide is not None and self.guide.window.isVisible()
+
+    def guide_tick(self):
+        """Refresh what the app can't get notified about (Teams running on the Mac)."""
+        if not self.guide_visible():
+            self.guide_ticking = False
+            return
+        self.refresh_guide()
+        AppHelper.callLater(2, self.guide_tick)
+
+    def refresh_guide(self):
+        if not self.guide_visible():
+            return
+        try:
+            link = kt.load_config().meeting_url or ""
+        except kb.BridgeError:
+            link = ""
+        running = any(app.bundleIdentifier() in TEAMS_BUNDLES
+                      for app in AppKit.NSWorkspace.sharedWorkspace().runningApplications())
+        state = self.viewer.state if self.viewer else "stopped"
+        self.guide.update(kg.steps(link, running, bool(self.keyboard), self.share_status, state),
+                          state == "live")
+
+    def guide_frame(self, image):
+        if self.guide is not None:
+            self.guide.set_frame(image)
+
+    def open_teams_on_mac(self):
+        """Open the saved meeting in the Teams app on this Mac (nothing goes to Windows)."""
+        try:
+            url = kt.desktop_link(kv.viewer_url(kt.load_config().meeting_url))
+        except kb.BridgeError as exc:
+            return self.set_notice(str(exc), "error")
+        AppKit.NSWorkspace.sharedWorkspace().openURL_(Foundation.NSURL.URLWithString_(url))
 
     def ask_meeting_link(self):
         """Show a dialog to save the Teams meeting link; returns True if saved."""
@@ -1002,6 +1191,7 @@ class Controller:
             try:
                 kt.save_url(field.stringValue())
                 self.set_notice("Saved the Teams meeting link.")
+                self.refresh_guide()
                 return True
             except (kb.BridgeError, OSError) as exc:
                 alert.setInformativeText_(f"⚠️ {exc}")
@@ -1183,6 +1373,15 @@ class Delegate(AppKit.NSObject):
 
     def stopViewer_(self, sender):
         self.controller.stop_viewer()
+
+    def showGuide_(self, sender):
+        self.controller.show_guide()
+
+    def openTeamsOnMac_(self, sender):
+        self.controller.open_teams_on_mac()
+
+    def startViewer_(self, sender):
+        self.controller.start_viewer_guided()
 
     def setTeamsLink_(self, sender):
         self.controller.ask_meeting_link()
