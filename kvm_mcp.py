@@ -12,6 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 import kvm_bridge as kb
+import kvm_teams as kt
 
 mcp = MCPServer(
     "windows-keyboard",
@@ -54,6 +55,38 @@ def press_keys(combo: str) -> str:
     You cannot see the Windows screen: ask the user what happened before continuing.
     """
     return run({"op": "keys", "combo": combo})
+
+
+def run_teams(actions_for):
+    try:
+        actions = actions_for()
+        done = kt.run_actions(actions, kb.execute)
+    except kb.BridgeError as exc:
+        raise ToolError(f"{exc} {kt.VERIFY_HINT}") from None
+    return f"Sent: {' -> '.join(done)}. {kt.VERIFY_HINT}"
+
+
+@mcp.tool(annotations=SENDS_KEYS)
+def start_teams_screen_share() -> str:
+    """Make the Windows PC join the user's saved Microsoft Teams meeting and share its screen,
+    so the Windows screen can be seen in the Teams window on the Mac.
+
+    Only the meeting link saved by the user (in the app or with kvm_teams.py --set-url) is
+    ever opened; it cannot be changed here. Sends Win+R, the link, Enter, then the saved
+    steps (by default: wait, Enter to join, wait, Ctrl+Shift+E to share). Takes about 25
+    seconds. You cannot see Windows: afterwards, check a screenshot of the Teams window on
+    the Mac if you have one, otherwise ask the user whether the share started. The user may
+    need to click "Join now" or pick the screen in Teams' share picker by hand.
+    """
+    return run_teams(lambda: kt.share_actions(kt.load_config()))
+
+
+@mcp.tool(annotations=SENDS_KEYS)
+def stop_teams_screen_share() -> str:
+    """Leave the Teams call on the Windows PC (Ctrl+Shift+H), which also stops sharing.
+    Teams must be the focused window on Windows. You cannot see Windows: verify via a
+    screenshot of the Mac Teams window if available, otherwise ask the user."""
+    return run_teams(kt.leave_actions)
 
 
 @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))

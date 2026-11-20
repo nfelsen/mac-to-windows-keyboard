@@ -22,6 +22,7 @@ import kvm_bridge as kb
 import kvm_panel as kp
 import kvm_core as kc
 import kvm_mcp_setup as ms
+import kvm_teams as kt
 import windows_keyboard as wk
 
 BUTTON_BITS = {0: 1, 1: 2, 2: 4}  # NSEvent buttonNumber -> HID left/right/middle
@@ -234,6 +235,7 @@ class Controller:
         self.connecting = False
         self.capturing = False
         self.typing = False
+        self.teams_stop = None  # threading.Event while a Teams sequence runs
         self.typing_label = ""
         self.typing_finish = None
         self.bridge = None
@@ -362,7 +364,11 @@ class Controller:
         self.notice.setContentCompressionResistancePriority_forOrientation_(
             250, AppKit.NSLayoutConstraintOrientationHorizontal)
         self.notice.setContentHuggingPriority_forOrientation_(1, AppKit.NSLayoutConstraintOrientationHorizontal)
-        row = stack([self.paste_button, self.progress, self.stop_button, self.notice], spacing=12,
+        self.teams_button = self.control_button(
+            " Share to Teams", "shareTeams:", "person.2.wave.2",
+            "Windows joins your saved Teams meeting and shares its screen (Teams menu to set the link)")
+        row = stack([self.paste_button, self.teams_button, self.progress, self.stop_button, self.notice],
+                    spacing=12,
                     alignment=AppKit.NSLayoutAttributeCenterY)
         return row
 
@@ -603,6 +609,18 @@ class Controller:
         edit.addItemWithTitle_action_keyEquivalent_("Copy", "copy:", "c")
         edit.addItemWithTitle_action_keyEquivalent_("Select All", "selectAll:", "a")
         edit_item.setSubmenu_(edit)
+        teams_item = AppKit.NSMenuItem.alloc().init()
+        menubar.addItem_(teams_item)
+        teams = AppKit.NSMenu.alloc().initWithTitle_("Teams")
+        for title, action in (("Share Windows Screen to Teams", "shareTeams:"),
+                              ("Leave Teams Call on Windows", "leaveTeams:"),
+                              (None, None),
+                              ("Set Meeting Link…", "setTeamsLink:")):
+            if title is None:
+                teams.addItem_(AppKit.NSMenuItem.separatorItem())
+            else:
+                teams.addItemWithTitle_action_keyEquivalent_(title, action, "").setTarget_(self.delegate)
+        teams_item.setSubmenu_(teams)
         help_item = AppKit.NSMenuItem.alloc().init()
         menubar.addItem_(help_item)
         help_menu = AppKit.NSMenu.alloc().initWithTitle_("Help")
@@ -622,9 +640,11 @@ class Controller:
         self.capture_view.set_state(*kp.capture_message(
             bool(self.keyboard), self.connecting, self.capturing, self.typing, self.typing_label,
             self.cable_error, kc.RELEASE_SHORTCUT, kc.PASTE_SHORTCUT))
-        self.paste_button.setEnabled_(bool(self.keyboard) and not self.typing)
-        self.progress.setHidden_(not self.typing)
-        self.stop_button.setHidden_(not self.typing)
+        busy = self.typing or bool(self.teams_stop)
+        self.paste_button.setEnabled_(bool(self.keyboard) and not busy)
+        self.teams_button.setEnabled_(bool(self.keyboard) and not busy)
+        self.progress.setHidden_(not busy)
+        self.stop_button.setHidden_(not busy)
 
     # ----- cable -----
 
@@ -734,7 +754,7 @@ class Controller:
         if error:
             self.set_notice(error, "error")
 
-    def start_taps(self, taps, label, on_finish=None, check_caps=True):
+    def start_taps(self, taps, label, on_finish=None, check_caps=True, teams_step=False):
         """Queue validated taps; returns an error string instead if refused.
 
         ``on_finish(error_or_None)`` is called on the main thread when typing
@@ -742,6 +762,8 @@ class Controller:
         """
         if self.typing:
             return "Already typing; wait for it to finish or press Esc in the app window."
+        if self.teams_stop and not teams_step:
+            return "Sharing to Teams is in progress; wait for it or press Esc to stop it."
         if not self.keyboard:
             return "Cable not connected; nothing was typed."
         try:
@@ -784,6 +806,8 @@ class Controller:
             callback(error)
 
     def cancel_typing(self):
+        if self.teams_stop:
+            self.teams_stop.set()
         if not self.typing:
             return
         self.keys.clear()
@@ -796,7 +820,7 @@ class Controller:
 
     # ----- requests from kvm_mcp.py -----
 
-    def handle_bridge_request(self, request):
+    def handle_bridge_request(self, request, teams_step=False):
         """Runs on a bridge worker thread; hops to the main thread for state."""
         if request.get("op") == "status":
             result = {}
@@ -825,8 +849,8 @@ class Controller:
 
         def start():
             label = (f"keys {request['combo'].strip()}" if request["op"] == "keys"
-                     else "text from Copilot")
-            error = self.start_taps(taps, label, on_finish)
+                     else "the Teams meeting link" if teams_step else "text from Copilot")
+            error = self.start_taps(taps, label, on_finish, teams_step=teams_step)
             if error:
                 on_finish(error)
         AppHelper.callAfter(start)
@@ -834,6 +858,84 @@ class Controller:
         if outcome["error"]:
             raise kb.BridgeError(outcome["error"])
         return kb.describe(request, taps)
+
+    # ----- Teams screen share -----
+
+    def share_teams(self):
+        try:
+            config = kt.load_config()
+            if not config.meeting_url:
+                if not self.ask_meeting_link():
+                    return
+                config = kt.load_config()
+            actions = kt.share_actions(config)
+        except kb.BridgeError as exc:
+            return self.set_notice(str(exc), "error")
+        self.run_teams(actions, "Sharing Windows screen to Teams")
+
+    def leave_teams(self):
+        self.run_teams(kt.leave_actions(), "Leaving the Teams call")
+
+    def run_teams(self, actions, title):
+        if self.typing or self.teams_stop:
+            return self.set_notice("Already typing; wait for it to finish or press Esc.", "error")
+        if not self.keyboard:
+            return self.set_notice("Cable not connected; nothing was sent.", "error")
+        self.stop_capture()
+        stop = self.teams_stop = threading.Event()
+        self.progress.setDoubleValue_(0)
+        self.refresh()
+
+        def progress(index, total, label_text):
+            def show():
+                self.progress.setDoubleValue_((index - 1) / total)
+                self.set_notice(f"{title}: {label_text} ({index}/{total})… Esc stops.")
+            AppHelper.callAfter(show)
+
+        def worker():
+            try:
+                kt.run_actions(actions, lambda request: self.handle_bridge_request(request, teams_step=True),
+                               kt.stoppable_wait(stop), progress)
+                outcome = (f"{title}: sent. Check Teams on Windows; you may need to click Join "
+                           "or pick the screen to share.", "info")
+            except kb.BridgeError as exc:
+                outcome = (str(exc), "info" if stop.is_set() else "error")
+
+            def done():
+                self.teams_stop = None
+                self.set_notice(*outcome)
+                self.refresh()
+            AppHelper.callAfter(done)
+        threading.Thread(target=worker, daemon=True).start()
+
+    def ask_meeting_link(self):
+        """Show a dialog to save the Teams meeting link; returns True if saved."""
+        current = ""
+        try:
+            current = kt.load_config().meeting_url
+        except kb.BridgeError:
+            pass
+        alert = AppKit.NSAlert.alloc().init()
+        alert.setMessageText_("Teams Meeting Link")
+        alert.setInformativeText_(
+            "Paste the join link of a Teams meeting you own (a recurring \"Mac2Win\" meeting works "
+            "well). \"Share to Teams\" makes Windows open only this link, join, and share its screen, "
+            "so you and your AI assistant can see Windows in Teams on the Mac.")
+        field = AppKit.NSTextField.alloc().initWithFrame_(((0, 0), (420, 24)))
+        field.setStringValue_(current)
+        field.setPlaceholderString_("https://teams.microsoft.com/meet/…")
+        alert.setAccessoryView_(field)
+        alert.addButtonWithTitle_("Save")
+        alert.addButtonWithTitle_("Cancel")
+        alert.window().setInitialFirstResponder_(field)
+        while alert.runModal() == AppKit.NSAlertFirstButtonReturn:
+            try:
+                kt.save_url(field.stringValue())
+                self.set_notice("Saved the Teams meeting link.")
+                return True
+            except (kb.BridgeError, OSError) as exc:
+                alert.setInformativeText_(f"⚠️ {exc}")
+        return False
 
     # ----- capture -----
 
@@ -866,7 +968,7 @@ class Controller:
     def handle_event(self, event):
         kind = event.type()
         if kind in KEY_EVENTS and event.window() == self.window or self.capturing:
-            if self.typing:
+            if self.typing or self.teams_stop:
                 if kind == AppKit.NSEventTypeKeyDown and event.keyCode() == kc.MAC_ESCAPE:
                     self.cancel_typing()
                 elif kind == AppKit.NSEventTypeFlagsChanged and kc.is_release_shortcut(event.modifierFlags()):
@@ -998,6 +1100,15 @@ class Delegate(AppKit.NSObject):
 
     def copySetup_(self, sender):
         self.controller.copy_setup()
+
+    def shareTeams_(self, sender):
+        self.controller.share_teams()
+
+    def leaveTeams_(self, sender):
+        self.controller.leave_teams()
+
+    def setTeamsLink_(self, sender):
+        self.controller.ask_meeting_link()
 
     def openMcpDocs_(self, sender):
         self.controller.open_mcp_docs()

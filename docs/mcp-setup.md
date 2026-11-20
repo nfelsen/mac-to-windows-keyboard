@@ -268,3 +268,7 @@ Ask the assistant to run the `windows_keyboard_status` tool. It types nothing an
 ```bash
 /Users/YOU/.local/bin/uv run --directory /Users/YOU/src/mac-to-windows-keyboard kvm_mcp.py --status
 ```
+
+## Let the assistant see Windows (Teams screen share)
+
+The assistant can't see Windows, but it can look at a Teams meeting where Windows shares its screen, if it can take screenshots of the Mac (for example with Computer Use). Save a Teams meeting link once in the app (**Teams → Set Meeting Link…**) and join that meeting on the Mac. Then ask the assistant to run `start_teams_screen_share`. It makes Windows open only that saved link, join, and share its screen; `stop_teams_screen_share` leaves the call. Joining and picking the screen may still need a click on Windows. See the README's Teams section for details and for editing the steps.

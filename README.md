@@ -72,6 +72,8 @@ Tools:
 | `type_on_windows(text, press_enter=false, multiline=false)` | Types US-layout ASCII text. If any character is unsupported, nothing is typed. Enter is pressed only when `press_enter` is true. Line breaks are rejected unless `multiline` is true. Max 4000 characters. |
 | `press_keys(combo)` | Presses keys such as `enter`, `esc`, `ctrl+c`, `alt+tab`, `win+r`, or `ctrl+a ctrl+c` (up to 10, in order). Modifiers: ctrl, shift, alt, win. |
 | `windows_keyboard_status()` | Shows the port, baud rate, whether Windows sees the keyboard, and Caps Lock. Types nothing. |
+| `start_teams_screen_share()` | Makes Windows join your saved Teams meeting and share its screen (see [Teams screen share](#teams-screen-share)). Opens only the saved link. |
+| `stop_teams_screen_share()` | Leaves the Teams call on Windows (Ctrl+Shift+H). |
 
 Typing is refused while Windows Caps Lock is on or Windows doesn't see the keyboard. All keys are released after every call. If `kvm_app.py` is running, the server sends its requests through the app over a user-only Unix socket (`~/Library/Application Support/mac-to-windows-keyboard/kvm.sock`). The two share the cable, and Esc in the app stops a long typing request. Otherwise the server opens the cable itself for each call. Restart `kvm_app.py` after updating so it starts the socket.
 
@@ -99,6 +101,23 @@ For example, in the GitHub Copilot app open **Customize → MCP**, add a local (
 ```
 
 Keep tool approval turned on for this server: approving a tool call is what lets text reach Windows.
+
+### Teams screen share
+
+The assistant can't see Windows, but if Windows shares its screen in a Teams meeting that you also join on the Mac, an assistant that can take Mac screenshots (for example with Computer Use) can read the output from the Teams window.
+
+1. Create a Teams meeting you own, for example a recurring "Mac2Win" meeting, and copy its join link.
+2. In the app, choose **Teams → Set Meeting Link…** and paste it. You can also run `python3 kvm_teams.py --set-url "LINK"`. Only `https://teams.microsoft.com/...` and `msteams:` links are accepted, and they must be at most 259 characters (the Windows Run box limit). If a long `/l/meetup-join/` link is rejected, use the short `/meet/` link from the invite.
+3. Join the meeting on the Mac. Then click **Share to Teams** in the app (or use the Teams menu), or ask your assistant to run `start_teams_screen_share`.
+
+The default sequence is:
+- Win+R, the saved link, then Enter. `/l/` links are opened as `msteams://` so they go straight to the Teams desktop app. Other links open the browser first, which may ask to open Teams.
+- Wait 15 seconds, then press Enter for "Join now".
+- Wait 8 seconds, then press Ctrl+Shift+E to start sharing.
+
+Teams has no documented shortcut for "Join now", so Enter is a best effort. Teams may also show a picker asking which screen to share. Check Windows and click **Join now** or the screen yourself if needed. Microphone and camera aren't touched by default, because their current state is unknown. **Leave Teams Call on Windows** (or `stop_teams_screen_share`) presses Ctrl+Shift+H, which needs Teams to be the focused window. Esc or **Stop** in the app stops a running sequence. Each key step uses the same checks as other typing: it is refused while Windows Caps Lock is on or Windows doesn't see the keyboard, and all keys are released afterwards. `python3 kvm_teams.py --show` prints the saved settings without sending anything.
+
+The steps are stored in `~/Library/Application Support/mac-to-windows-keyboard/teams.json` as `share_steps`, and you can edit them. Each step is `"open"` (Win+R, link, Enter), `"wait N"` (seconds, at most 60), or `"keys COMBO"` (same syntax as `press_keys`). For example, add `"keys ctrl+shift+m"` to toggle the microphone (Ctrl+Shift+O toggles the camera), or lengthen the waits on a slow PC. The link can't be passed through MCP, so the assistant can only ever open the meeting you saved.
 
 ## Usage
 
@@ -154,5 +173,5 @@ This reads the chip's 50-byte parameter config (command `0x08`), changes only th
 ## Tests
 
 ```bash
-python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app test_kvm_mcp_setup
+python3 -m unittest -v test_windows_keyboard test_kvm_core test_kvm_bridge test_kvm_panel test_make_app test_kvm_mcp_setup test_kvm_teams
 ```
