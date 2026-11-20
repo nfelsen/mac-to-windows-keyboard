@@ -12,6 +12,7 @@ import kvm_viewer as kv
 
 TICK = 1.5  # seconds between join steps / preview refreshes
 WEB_SIZE = (1280, 800)
+OFF_SCREEN = (-5000, 0)
 CAPTURE_TIMEOUT = 15
 
 
@@ -82,24 +83,19 @@ class Viewer:
         config = WebKit.WKWebViewConfiguration.alloc().init()
         config.setWebsiteDataStore_(WebKit.WKWebsiteDataStore.nonPersistentDataStore())
         config.setMediaTypesRequiringUserActionForPlayback_(WebKit.WKAudiovisualMediaTypeNone)
-        no_media = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
-            kv.NO_MEDIA_SCRIPT, WebKit.WKUserScriptInjectionTimeAtDocumentStart, False)
-        config.userContentController().addUserScript_(no_media)
-        errors = WebKit.WKUserScript.alloc().initWithSource_injectionTime_forMainFrameOnly_(
-            kv.ERROR_LOG_SCRIPT, WebKit.WKUserScriptInjectionTimeAtDocumentStart, True)
-        config.userContentController().addUserScript_(errors)
+        # No document-start user scripts: with them injected Teams admitted the viewer
+        # but never created the share video; the plain page (as in the spike) does.
         rect = Foundation.NSMakeRect(0, 0, *WEB_SIZE)
         self.web = WebKit.WKWebView.alloc().initWithFrame_configuration_(rect, config)
-        # The window is transparent, which macOS reports as occluded; WebKit would then
-        # throttle the page and Teams stops delivering the share video. Opt out (SPI).
+        # Keep the page "visible" to WebKit even though nobody sees the window (SPI).
         if self.web.respondsToSelector_("_setWindowOcclusionDetectionEnabled:"):
             self.web._setWindowOcclusionDetectionEnabled_(False)
         self.web.setCustomUserAgent_(kv.USER_AGENT)
         self.web.setUIDelegate_(self.delegate)
         self.web.setNavigationDelegate_(self.delegate)
-        # Invisible but on screen: fully transparent, click-through, behind normal
-        # windows. WebKit marks an off-screen page hidden (Teams may stop its video) and
-        # throttles a borderless window, and macOS pulls a titled one back on screen anyway.
+        # Opaque titled window parked off-screen and ordered front: the setup that received
+        # the share in the spike. A transparent window sent behind the others joined the
+        # meeting but Teams never delivered video to it.
         self.web_window = AppKit.NSWindow.alloc().initWithContentRect_styleMask_backing_defer_(
             rect, AppKit.NSWindowStyleMaskTitled, AppKit.NSBackingStoreBuffered, False)
         self.web_window.setReleasedWhenClosed_(False)
@@ -107,11 +103,9 @@ class Viewer:
         self.web_window.setCollectionBehavior_(
             AppKit.NSWindowCollectionBehaviorTransient | AppKit.NSWindowCollectionBehaviorIgnoresCycle)
         self.web_window.setContentView_(self.web)
-        self.web_window.setAlphaValue_(0.0)
         self.web_window.setIgnoresMouseEvents_(True)
-        self.web_window.setLevel_(AppKit.NSNormalWindowLevel - 1)
-        self.web_window.setFrameOrigin_((0, 0))
-        self.web_window.orderBack_(None)
+        self.web_window.setFrameOrigin_(OFF_SCREEN)
+        self.web_window.orderFront_(None)
         self.url = url
         self.stall = kv.StallWatch()
         log(f"starting; window at {tuple(self.web_window.frame().origin)}")
