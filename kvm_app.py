@@ -487,7 +487,7 @@ class Controller:
         self.guide_hint = label("", 12, text_color="secondaryLabelColor")
         self.guide_hint.setLineBreakMode_(AppKit.NSLineBreakByTruncatingTail)
         self.guide_hint.setContentCompressionResistancePriority_forOrientation_(
-            249, AppKit.NSLayoutConstraintOrientationHorizontal)
+            260, AppKit.NSLayoutConstraintOrientationHorizontal)
         row = stack([self.paste_button, self.screen_button, self.guide_hint, self.progress, self.stop_button,
                      self.notice],
                     spacing=12,

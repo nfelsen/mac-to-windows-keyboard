@@ -114,7 +114,7 @@ def hint(items: List[Step], started: bool) -> str:
     if items and items[-1].status == DONE:
         return "Windows screen is live."
     if not started:
-        return "Watch the Windows screen here via Teams; opens a step-by-step guide."
+        return "\u2190 view Windows here via Teams (step-by-step guide)"
     for status, prefix in ((ERROR, "Problem: "), (CURRENT, "Next: "), (BUSY, "")):
         for step in items:
             if step.status == status:
